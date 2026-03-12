@@ -1,0 +1,1630 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>NAI Prompt Builder</title>
+<script src="coi-serviceworker.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" crossorigin="anonymous">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.26.2/babel.min.js" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" crossorigin="anonymous"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html{height:100%;height:-webkit-fill-available}
+body{background:#0d0d18;color:#ddd;font-family:'Noto Sans KR','Segoe UI',sans-serif;overflow:hidden;
+  height:100vh;height:100dvh;height:-webkit-fill-available;
+  padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  -webkit-text-size-adjust:100%;touch-action:manipulation}
+::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:rgba(120,90,255,.35);border-radius:3px}
+select,input,textarea,button{font-size:14px;-webkit-appearance:none;border-radius:0}
+select option{background:#1a1a30;color:#ddd}
+/* Character card - touch friendly */
+.cc{padding:12px 10px;border-radius:8px;cursor:pointer;border:1px solid rgba(255,255,255,.06);transition:all .15s;display:flex;align-items:center;gap:10px;margin-bottom:4px;min-height:52px}
+.cc:active{background:rgba(120,90,255,.15)}.cc.on{background:rgba(120,90,255,.12);border-color:rgba(120,90,255,.35)}
+.ct{width:40px;height:40px;border-radius:6px;background:#1a1a2e;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:18px;overflow:hidden}
+.ct img{width:100%;height:100%;object-fit:cover}
+.gen-img{max-width:100%;max-height:300px;border-radius:8px;cursor:pointer;transition:transform .2s}
+.gen-btn{background:linear-gradient(135deg,#785aff,#ff6b9d);border:none;border-radius:8px;padding:10px 20px;color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;transition:opacity .15s;white-space:nowrap;min-height:44px}
+.gen-btn:active{opacity:.8}.gen-btn:disabled{opacity:.4}
+.anlas-badge{background:rgba(120,90,255,.15);border:1px solid rgba(120,90,255,.25);border-radius:14px;padding:4px 12px;font-size:12px;color:#b095ff;font-weight:600;display:flex;align-items:center;gap:5px}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes loadbar{0%{left:-40%;width:40%}50%{left:20%;width:60%}100%{left:100%;width:40%}}
+.gen-loadbar{position:fixed;top:0;left:0;right:0;height:3px;z-index:9999;overflow:hidden;background:rgba(120,90,255,.1)}
+.gen-loadbar::after{content:'';position:absolute;top:0;height:100%;background:linear-gradient(90deg,#785aff,#ff6b9d);animation:loadbar 1.5s ease-in-out infinite}
+.resizer{width:6px;cursor:col-resize;background:transparent;flex-shrink:0;position:relative;z-index:10;touch-action:none}
+.resizer:hover,.resizer:active{background:rgba(120,90,255,.15)}
+.resizer::after{content:'';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:2px;height:32px;background:rgba(255,255,255,.12);border-radius:1px}
+.resizer:hover::after,.resizer:active::after{background:rgba(120,90,255,.5)}
+.spinner{width:16px;height:16px;border:2px solid rgba(120,90,255,.2);border-top-color:#785aff;border-radius:50%;animation:spin .8s linear infinite;display:inline-block}
+/* Scrollable panels - iOS momentum */
+.scroll-y{overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+.scroll-x{overflow-x:auto;-webkit-overflow-scrolling:touch;overscroll-behavior-x:contain}
+/* Touch-friendly buttons */
+.t-btn{min-width:44px;min-height:44px;display:inline-flex;align-items:center;justify-content:center}
+/* iPad portrait: narrower sidebar */
+@media(max-width:1024px){
+  .sidebar{width:170px!important;min-width:170px!important}
+}
+/* iPad landscape: wider columns */
+@media(min-width:1100px){
+  .col-panel{min-width:280px!important;flex:0 0 280px!important}
+}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const{useState,useEffect,useRef,useCallback}=React;
+const G=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
+const LS="nai-pb-v4";const PK="nai-pb";const FS=!!window.showSaveFilePicker;
+function ll(k,f){try{const v=localStorage.getItem(k);return v?JSON.parse(v):f}catch{return f}}
+function ls(k,d){try{localStorage.setItem(k,JSON.stringify(d))}catch{}}
+
+const DS={apiToken:"",model:"nai-diffusion-4-5-full",width:832,height:1216,steps:23,scale:6,sampler:"k_euler_ancestral",seed:"",smea:false,smeaDyn:false,format:"png",defaultFilename:"nai-pb-backup",tier:3,anlasBalance:10000};
+const MO=[{v:"nai-diffusion-4-5-full",l:"V4.5 Full"},{v:"nai-diffusion-4-5-curated",l:"V4.5 Curated"},{v:"nai-diffusion-4-full",l:"V4 Full"},{v:"nai-diffusion-4-curated-preview",l:"V4 Curated"},{v:"nai-diffusion-3",l:"V3 Anime"}];
+const SA=[{v:"k_euler",l:"Euler"},{v:"k_euler_ancestral",l:"Euler Ancestral"},{v:"k_dpmpp_2s_ancestral",l:"DPM++ 2S Ancestral"},{v:"k_dpmpp_2m",l:"DPM++ 2M"},{v:"k_dpmpp_sde",l:"DPM++ SDE"},{v:"ddim_v3",l:"DDIM"}];
+const RE=[{w:832,h:1216,l:"832×1216 세로"},{w:1216,h:832,l:"1216×832 가로"},{w:1024,h:1024,l:"1024×1024"},{w:1024,h:1536,l:"1024×1536 세로大"},{w:1536,h:1024,l:"1536×1024 가로大"},{w:640,h:640,l:"640×640 소"}];
+
+function DD(){return{baseCols:[{id:G(),name:"베이스"}],baseChks:[],chars:[],activeIds:[],collapsed:{},settings:{...DS}}}
+
+async function exF(j,fn){if(FS){try{const h=await window.showSaveFilePicker({id:PK,suggestedName:fn+".json",types:[{description:"JSON",accept:{"application/json":[".json"]}}]});const w=await h.createWritable();await w.write(j);await w.close();return 1}catch(e){if(e.name==="AbortError")return 0}}const b=new Blob([j],{type:"application/json"});const u=URL.createObjectURL(b);Object.assign(document.createElement("a"),{href:u,download:fn+".json"}).click();URL.revokeObjectURL(u);return 1}
+async function imF(){if(FS){try{const[h]=await window.showOpenFilePicker({id:PK,types:[{description:"JSON",accept:{"application/json":[".json"]}}]});return JSON.parse(await(await h.getFile()).text())}catch{return null}}return new Promise(r=>{const i=Object.assign(document.createElement("input"),{type:"file",accept:".json"});i.onchange=async e=>{const f=e.target.files[0];if(!f)return r(null);try{r(JSON.parse(await f.text()))}catch{r(null)}};i.click()})}
+
+/* ═══ NAI API ═══ */
+const NAI_IMG="https://image.novelai.net/ai/generate-image";
+const NAI_SUB="https://api.novelai.net/user/subscription";
+
+async function fetchAnlas(token){
+  token=(token||"").trim();
+  if(!token)return null;
+  try{
+    const r=await fetch(NAI_SUB,{headers:{"Authorization":"Bearer "+token}});
+    if(!r.ok){console.warn("NAI sub API error:",r.status);return{anlas:"err("+r.status+")",tier:0,active:false}}
+    const d=await r.json();
+    console.log("NAI /user/subscription response:",JSON.stringify(d).slice(0,2000));
+    let a=null;
+    if(d.trainingStepsLeft?.fixedTrainingStepsLeft!=null)a=d.trainingStepsLeft.fixedTrainingStepsLeft;
+    else if(d.subscription?.trainingStepsLeft?.fixedTrainingStepsLeft!=null)a=d.subscription.trainingStepsLeft.fixedTrainingStepsLeft;
+    else if(d.fixedTrainingStepsLeft!=null)a=d.fixedTrainingStepsLeft;
+    if(a===null){const m=JSON.stringify(d).match(/"fixedTrainingStepsLeft"\s*:\s*(\d+)/);if(m)a=parseInt(m[1])}
+    const tier=d.tier??d.subscription?.tier??0;
+    const active=d.active??d.subscription?.active??false;
+    return{anlas:a??0,tier,active,raw:d};
+  }catch(e){
+    console.error("fetchAnlas error:",e);
+    const msg=e.message||"";
+    if(msg.includes("Failed to fetch")||msg.includes("NetworkError"))
+      return{anlas:"CORS?",tier:0,active:false,raw:{error:"CORS 또는 네트워크 오류. 브라우저 콘솔(F12)을 확인하세요. 로컬 file:// 에서는 CORS 문제가 발생할 수 있습니다."}};
+    return{anlas:"err",tier:0,active:false,raw:{error:msg}}
+  }
+}
+
+async function generateImage(token,se,basePos,baseNeg,charPrompts,vibeRefs,i2iOpts){
+  token=token.trim();
+  const seed=se.seed?parseInt(se.seed):Math.floor(Math.random()*4294967295);
+  const isV4=se.model.includes("-4");
+  const isV45=se.model.includes("-4-5");
+  const negFB="blurry, lowres, error, film grain, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration";
+  const negText=baseNeg||negFB;
+  charPrompts=charPrompts||[];
+
+  let params;
+  if(isV4){
+    // V4.5: pipe syntax for multi-char (confirmed working)
+    // V4: structured char_captions
+    let effectiveBasePos=basePos;
+    let charCaptions=[];
+    let charNegCaptions=[];
+    let charPromptsLegacy=[];
+    let negAll=negText;
+
+    if(charPrompts.length>0){
+      if(isV45){
+        effectiveBasePos=[basePos,...charPrompts.map(c=>c.pos)].filter(Boolean).join(" | ");
+        negAll=[negText,...charPrompts.map(c=>c.neg).filter(Boolean)].join(", ");
+      }else{
+        charCaptions=charPrompts.map(cp=>({char_caption:cp.pos||"",centers:[]}));
+        charNegCaptions=charPrompts.map(cp=>({char_caption:cp.neg||"",centers:[]}));
+        charPromptsLegacy=charPrompts.map(cp=>({prompt:cp.pos||"",uc:cp.neg||""}));
+      }
+    }
+
+    params={
+      params_version:3,
+      width:se.width,height:se.height,scale:se.scale,sampler:se.sampler,steps:se.steps,
+      seed:seed,n_samples:1,ucPreset:0,qualityToggle:true,
+      sm:se.smea||false,sm_dyn:se.smeaDyn||false,
+      dynamic_thresholding:false,controlnet_strength:1,legacy:false,
+      add_original_image:true,cfg_rescale:0,noise_schedule:"karras",
+      legacy_v3_extend:false,skip_cfg_above_sigma:null,
+      use_coords:false,
+      characterPrompts:charPromptsLegacy,
+      v4_prompt:{
+        caption:{base_caption:effectiveBasePos,char_captions:charCaptions},
+        use_coords:false,use_order:true
+      },
+      v4_negative_prompt:{
+        caption:{base_caption:negAll,char_captions:charNegCaptions}
+      },
+      negative_prompt:negAll,
+    };
+    params._inputOverride=effectiveBasePos;
+  }else{
+    // V3 — combine all into flat prompt
+    const allPos=[basePos,...charPrompts.map(c=>c.pos)].filter(Boolean).join(", ");
+    const allNeg=[negText,...charPrompts.map(c=>c.neg)].filter(Boolean).join(", ");
+    params={
+      width:se.width,height:se.height,scale:se.scale,sampler:se.sampler,steps:se.steps,
+      seed:seed,n_samples:1,ucPreset:0,qualityToggle:true,
+      sm:se.smea||false,sm_dyn:se.smeaDyn||false,
+      dynamic_thresholding:false,controlnet_strength:1,legacy:false,
+      add_original_image:true,cfg_rescale:0,noise_schedule:"native",
+      uc:allNeg,
+    };
+    params._inputOverride=allPos;
+  }
+
+  // Vibe transfer
+  if(vibeRefs&&vibeRefs.length>0){
+    params.reference_image_multiple=[];
+    params.reference_strength_multiple=[];
+    params.reference_information_extracted_multiple=[];
+    for(const ref of vibeRefs){
+      const b64=ref.d.replace(/^data:image\/[^;]+;base64,/,"");
+      params.reference_image_multiple.push(b64);
+      params.reference_strength_multiple.push(ref.s);
+      params.reference_information_extracted_multiple.push(ref.ie);
+    }
+  }
+
+  // img2img support
+  if(i2iOpts){
+    params.image=i2iOpts.image;
+    params.strength=i2iOpts.strength||0.6;
+    params.noise=i2iOpts.noise||0;
+    params.extra_noise_seed=seed;
+    params.inpaintImg2ImgStrength=1;
+    params.autoSmea=false;
+    params.deliberate_euler_ancestral_bug=false;
+    params.prefer_brownian=true;
+    params.color_correct=false;
+    params.legacy_uc=false;
+    params.normalize_reference_strength_multiple=true;
+    if(params.v4_negative_prompt)params.v4_negative_prompt.legacy_uc=false;
+  }
+
+  const inputField=params._inputOverride||basePos;
+  delete params._inputOverride;
+  const action=i2iOpts?"img2img":"generate";
+  const payload={input:inputField,model:se.model,action:action,parameters:params};
+
+  console.log("=== NAI",action.toUpperCase(),"===");
+  console.log("Model:",se.model,"V4.5:",isV45,"Chars:",charPrompts.length);
+  if(i2iOpts)console.log("Strength:",i2iOpts.strength,"Noise:",i2iOpts.noise,"ImgB64 len:",i2iOpts.image.length,"starts:",i2iOpts.image.slice(0,20));
+  console.log("[POSITIVE input]:",inputField.slice(0,300));
+  console.log("[POSITIVE v4_prompt.base_caption]:",params.v4_prompt?.caption?.base_caption?.slice(0,300)||"(V3)");
+  if(params.v4_prompt?.caption?.char_captions?.length>0)params.v4_prompt.caption.char_captions.forEach((cc,i)=>console.log("[POSITIVE char_caption "+i+"]:",cc.char_caption?.slice(0,150)));
+  console.log("[NEGATIVE negative_prompt]:",params.negative_prompt?.slice(0,300)||"(none)");
+  console.log("[NEGATIVE v4_neg.base_caption]:",params.v4_negative_prompt?.caption?.base_caption?.slice(0,300)||"(none)");
+  if(params.v4_negative_prompt?.caption?.char_captions?.length>0)params.v4_negative_prompt.caption.char_captions.forEach((cc,i)=>console.log("[NEGATIVE char_neg_caption "+i+"]:",cc.char_caption?.slice(0,150)));
+  console.log("[characterPrompts]:",JSON.stringify(params.characterPrompts?.map(c=>({p:c.prompt?.slice(0,50),uc:c.uc?.slice(0,50)}))));
+
+  const url="https://image.novelai.net/ai/generate-image";
+  const resp=await fetch(url,{method:"POST",body:JSON.stringify(payload),headers:{"Authorization":"Bearer "+token,"Content-Type":"application/json"}});
+  if(!resp.ok){const e=await resp.text();console.error("NAI err:",resp.status,e);throw new Error("NAI "+resp.status+": "+e.slice(0,200))}
+  const blob=await resp.blob();
+  try{const zip=await JSZip.loadAsync(blob);const f=Object.keys(zip.files);if(!f.length)throw 0;return URL.createObjectURL(await zip.files[f[0]].async("blob"))}
+  catch(e){if(blob.type?.startsWith("image/"))return URL.createObjectURL(blob);throw new Error("응답 파싱 실패")}
+}
+
+async function doInpaint(token,se,basePos,baseNeg,imgB64,maskB64,strength){
+  token=token.trim();
+  const seed=se.seed?parseInt(se.seed):Math.floor(Math.random()*4294967295);
+  // Dedicated inpainting model names
+  let inpaintModel;
+  if(se.model.includes("-4-5")||se.model.includes("-4-full"))inpaintModel="nai-diffusion-4-full-inpainting";
+  else if(se.model.includes("-4-curated"))inpaintModel="nai-diffusion-4-curated-inpainting";
+  else inpaintModel="nai-diffusion-3-inpainting";
+  const negFB="blurry, lowres, error, worst quality, bad quality, jpeg artifacts";
+  const negText=baseNeg||negFB;
+  const params={
+    params_version:3,
+    width:se.width,height:se.height,scale:se.scale,sampler:se.sampler,steps:se.steps,
+    seed:seed,n_samples:1,ucPreset:0,qualityToggle:true,
+    sm:false,sm_dyn:false,
+    dynamic_thresholding:false,controlnet_strength:1,legacy:false,
+    add_original_image:true,cfg_rescale:0,noise_schedule:"karras",
+    legacy_v3_extend:false,skip_cfg_above_sigma:null,
+    extra_noise_seed:seed,
+    image:imgB64,mask:maskB64,strength:strength,noise:0,
+    use_coords:false,characterPrompts:[],
+    v4_prompt:{caption:{base_caption:basePos,char_captions:[]},use_coords:false,use_order:true},
+    v4_negative_prompt:{caption:{base_caption:negText,char_captions:[]}},
+    negative_prompt:negText,
+  };
+  const payload={input:basePos,model:inpaintModel,action:"infill",parameters:params};
+  console.log("=== NAI INPAINT ===");
+  console.log("Model:",inpaintModel,"Action:infill","Strength:",strength);
+  console.log("Prompt:",basePos.slice(0,100));
+  console.log("Image b64 len:",imgB64.length,"Mask b64 len:",maskB64.length);
+  console.log("Payload (no img/mask):",JSON.stringify({...payload,parameters:{...params,image:"[b64]",mask:"[b64]"}}).slice(0,1500));
+  const url="https://image.novelai.net/ai/generate-image";
+  const resp=await fetch(url,{method:"POST",body:JSON.stringify(payload),headers:{"Authorization":"Bearer "+token,"Content-Type":"application/json"}});
+  if(!resp.ok){const e=await resp.text();console.error("NAI inpaint err:",resp.status,e);throw new Error("NAI "+resp.status+": "+e.slice(0,200))}
+  const blob=await resp.blob();
+  try{const zip=await JSZip.loadAsync(blob);const f=Object.keys(zip.files);if(!f.length)throw 0;return URL.createObjectURL(await zip.files[f[0]].async("blob"))}
+  catch(e){if(blob.type?.startsWith("image/"))return URL.createObjectURL(blob);throw new Error("응답 파싱 실패")}
+}
+
+// NAI Director Tools - Background Removal
+async function augmentImage(token,reqType,width,height,imgB64){
+  const data={req_type:reqType,width:width,height:height,image:imgB64};
+  const url="https://image.novelai.net/ai/augment-image";
+  const resp=await fetch(url,{method:"POST",body:JSON.stringify(data),headers:{"Authorization":"Bearer "+token.trim(),"Content-Type":"application/json"}});
+  if(!resp.ok){const e=await resp.text();throw new Error("NAI augment "+resp.status+": "+e.slice(0,200))}
+  const blob=await resp.blob();
+  try{const zip=await JSZip.loadAsync(blob);const f=Object.keys(zip.files);if(!f.length)throw 0;return URL.createObjectURL(await zip.files[f[0]].async("blob"))}
+  catch(e){if(blob.type?.startsWith("image/"))return URL.createObjectURL(blob);throw new Error("응답 파싱 실패")}
+}
+
+// Local bg-removal via @imgly/background-removal (ONNX/WASM, free, no API)
+let _bgRemoveModule=null;
+async function localBgRemove(imgBlob,onProgress){
+  if(!_bgRemoveModule){
+    onProgress&&onProgress("모델 로딩 중... (최초 ~40MB 다운로드)");
+    _bgRemoveModule=await import("https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.7.0/+esm");
+  }
+  onProgress&&onProgress("배경 분석 중...");
+  const result=await _bgRemoveModule.default(imgBlob,{
+    model:"isnet_fp16",
+    output:{format:"image/png",type:"foreground"}
+  });
+  return result; // returns Blob (PNG with transparent bg)
+}
+
+function estimateAnlas(se,isOpus,vibeCount,action){
+  action=action||"generate";
+  const px=se.width*se.height;
+  const steps=se.steps||28;
+  const nSamples=1;
+  const normalMaxPx=1024*1024;
+  const isNormal=px<=normalMaxPx;
+  const isSmall=px<=640*640;
+
+  // Opus free conditions: txt2img only, 1 sample, ≤normal size, ≤28 steps
+  if(isOpus&&action==="generate"&&nSamples===1&&isNormal&&steps<=28)return{cost:0,free:true,label:"FREE (Opus)"};
+
+  // Base cost: per-megapixel scaling
+  // NAI charges roughly based on pixel count relative to 1MP
+  const mpRatio=px/normalMaxPx;
+  let baseCost;
+  if(isSmall)baseCost=2;
+  else if(isNormal)baseCost=Math.max(2,Math.ceil(mpRatio*5));
+  else baseCost=Math.ceil(mpRatio*5); // large images scale up
+
+  // Steps multiplier (28 is base)
+  let stepMult=steps/28;
+  if(stepMult<1)stepMult=1; // minimum 1x even for fewer steps
+  let cost=Math.ceil(baseCost*stepMult);
+
+  // SMEA surcharge (~30%)
+  if(se.smea&&!se.smeaDyn)cost=Math.ceil(cost*1.3);
+  if(se.smeaDyn)cost=Math.ceil(cost*1.5);
+
+  // img2img / inpaint uses base image = not free for Opus
+  if(action!=="generate")cost=Math.max(cost,5);
+
+  // n_samples
+  cost*=nSamples;
+
+  // Vibe Transfer costs (V4 models)
+  let vibeCost=0;
+  if(vibeCount>0&&se.model&&se.model.includes("4")){
+    vibeCost=vibeCount*2; // encoding fee per vibe
+  }
+  if(vibeCount>4)vibeCost+=(vibeCount-4)*2; // extra vibes surcharge
+
+  const total=cost+vibeCost;
+  const parts=[];
+  parts.push(`생성 ${cost}`);
+  if(vibeCost>0)parts.push(`바이브 ${vibeCost}`);
+
+  return{cost:total,free:false,label:`~${total} Anlas (${parts.join(" + ")})`};
+}
+
+/* ─── Modal ─── */
+/* ── Color Wheel Picker ── */
+function ColorWheel({color,onChange,onClose}){
+  const wheelRef=useRef(null),svRef=useRef(null);
+  const[hsv,sHsv]=useState(()=>{
+    const r=parseInt(color.slice(1,3),16)/255,g=parseInt(color.slice(3,5),16)/255,b=parseInt(color.slice(5,7),16)/255;
+    const mx=Math.max(r,g,b),mn=Math.min(r,g,b),d=mx-mn;
+    let h=0;if(d>0){if(mx===r)h=((g-b)/d+6)%6;else if(mx===g)h=(b-r)/d+2;else h=(r-g)/d+4;h/=6}
+    return{h,s:mx>0?d/mx:0,v:mx};
+  });
+  const hsv2hex=(h,s,v)=>{
+    const i=Math.floor(h*6),f=h*6-i,p=v*(1-s),q=v*(1-f*s),t=v*(1-(1-f)*s);
+    let r,g,b;switch(i%6){case 0:r=v;g=t;b=p;break;case 1:r=q;g=v;b=p;break;case 2:r=p;g=v;b=t;break;case 3:r=p;g=q;b=v;break;case 4:r=t;g=p;b=v;break;default:r=v;g=p;b=q}
+    return"#"+[r,g,b].map(x=>Math.round(x*255).toString(16).padStart(2,"0")).join("");
+  };
+  const drawWheel=useCallback(()=>{
+    const cv=wheelRef.current;if(!cv)return;
+    const sz=cv.width,cx=sz/2,cy=sz/2,outerR=sz/2-2,innerR=sz/2-24;
+    const ctx=cv.getContext("2d");ctx.clearRect(0,0,sz,sz);
+    // Draw hue ring
+    for(let a=0;a<360;a++){
+      const rad=a*Math.PI/180;const rad2=(a+2)*Math.PI/180;
+      ctx.beginPath();ctx.moveTo(cx+innerR*Math.cos(rad),cy+innerR*Math.sin(rad));
+      ctx.lineTo(cx+outerR*Math.cos(rad),cy+outerR*Math.sin(rad));
+      ctx.lineTo(cx+outerR*Math.cos(rad2),cy+outerR*Math.sin(rad2));
+      ctx.lineTo(cx+innerR*Math.cos(rad2),cy+innerR*Math.sin(rad2));
+      ctx.closePath();ctx.fillStyle=`hsl(${a},100%,50%)`;ctx.fill();
+    }
+    // Hue indicator
+    const ha=hsv.h*Math.PI*2;const hx=cx+(innerR+12)*Math.cos(ha),hy=cy+(innerR+12)*Math.sin(ha);
+    ctx.beginPath();ctx.arc(hx,hy,5,0,Math.PI*2);ctx.strokeStyle="#fff";ctx.lineWidth=2;ctx.stroke();
+  },[hsv.h]);
+  const drawSV=useCallback(()=>{
+    const cv=svRef.current;if(!cv)return;
+    const sz=cv.width;const ctx=cv.getContext("2d");
+    // SV square
+    for(let x=0;x<sz;x++){for(let y=0;y<sz;y++){
+      const s=x/sz,v=1-y/sz;
+      ctx.fillStyle=hsv2hex(hsv.h,s,v);ctx.fillRect(x,y,1,1);
+    }}
+    // SV indicator
+    const ix=hsv.s*sz,iy=(1-hsv.v)*sz;
+    ctx.beginPath();ctx.arc(ix,iy,6,0,Math.PI*2);ctx.strokeStyle="#fff";ctx.lineWidth=2;ctx.stroke();
+    ctx.beginPath();ctx.arc(ix,iy,5,0,Math.PI*2);ctx.strokeStyle="#000";ctx.lineWidth=1;ctx.stroke();
+  },[hsv]);
+  useEffect(()=>{drawWheel()},[drawWheel]);
+  useEffect(()=>{drawSV()},[drawSV]);
+
+  const onWheelClick=(e)=>{
+    const cv=wheelRef.current;if(!cv)return;
+    const r=cv.getBoundingClientRect();
+    const x=e.clientX-r.left-cv.width/2,y=e.clientY-r.top-cv.height/2;
+    const dist=Math.sqrt(x*x+y*y),sz=cv.width/2;
+    if(dist<sz-26){/* inside SV area, ignore */return}
+    if(dist>sz)return;
+    let h=Math.atan2(y,x)/(Math.PI*2);if(h<0)h+=1;
+    const nw={...hsv,h};sHsv(nw);onChange(hsv2hex(nw.h,nw.s,nw.v));
+  };
+  const onSVClick=(e)=>{
+    const cv=svRef.current;if(!cv)return;
+    const r=cv.getBoundingClientRect();
+    const s=Math.max(0,Math.min(1,(e.clientX-r.left)/cv.width));
+    const v=Math.max(0,Math.min(1,1-(e.clientY-r.top)/cv.height));
+    const nw={...hsv,s,v};sHsv(nw);onChange(hsv2hex(nw.h,nw.s,nw.v));
+  };
+  const wheelDrag=useRef(false),svDrag=useRef(false);
+  const hexVal=hsv2hex(hsv.h,hsv.s,hsv.v);
+  return(
+  <div style={{position:"fixed",zIndex:10001,top:"50%",left:"50%",transform:"translate(-50%,-50%)",background:"#1a1428",borderRadius:12,padding:16,boxShadow:"0 8px 40px rgba(0,0,0,.6)",border:"1px solid rgba(90,180,255,.2)",display:"flex",flexDirection:"column",alignItems:"center",gap:10}} onClick={e=>e.stopPropagation()}>
+    <div style={{position:"relative",width:200,height:200}}>
+      <canvas ref={wheelRef} width={200} height={200} style={{position:"absolute",inset:0,cursor:"crosshair"}}
+        onMouseDown={e=>{wheelDrag.current=true;onWheelClick(e)}}
+        onMouseMove={e=>{if(wheelDrag.current)onWheelClick(e)}}
+        onMouseUp={()=>{wheelDrag.current=false}}
+        onMouseLeave={()=>{wheelDrag.current=false}}/>
+      <canvas ref={svRef} width={100} height={100} style={{position:"absolute",top:50,left:50,width:100,height:100,cursor:"crosshair",borderRadius:2}}
+        onMouseDown={e=>{svDrag.current=true;onSVClick(e)}}
+        onMouseMove={e=>{if(svDrag.current)onSVClick(e)}}
+        onMouseUp={()=>{svDrag.current=false}}
+        onMouseLeave={()=>{svDrag.current=false}}/>
+    </div>
+    <div style={{display:"flex",alignItems:"center",gap:8,width:"100%"}}>
+      <div style={{width:32,height:32,borderRadius:6,background:hexVal,border:"2px solid rgba(255,255,255,.2)",flexShrink:0}}/>
+      <input value={hexVal} onChange={e=>{const v=e.target.value;if(/^#[0-9a-fA-F]{6}$/.test(v)){onChange(v);
+        const rr=parseInt(v.slice(1,3),16)/255,gg=parseInt(v.slice(3,5),16)/255,bb=parseInt(v.slice(5,7),16)/255;
+        const mx=Math.max(rr,gg,bb),mn=Math.min(rr,gg,bb),d=mx-mn;
+        let h=0;if(d>0){if(mx===rr)h=((gg-bb)/d+6)%6;else if(mx===gg)h=(bb-rr)/d+2;else h=(rr-gg)/d+4;h/=6}
+        sHsv({h,s:mx>0?d/mx:0,v:mx})}
+      }} style={{flex:1,background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",borderRadius:6,padding:"6px 10px",color:"#ddd",fontSize:13,fontFamily:"monospace"}}/>
+      <button onClick={onClose} style={{...Z.hB,fontSize:11,padding:"6px 12px"}}>확인</button>
+    </div>
+  </div>);
+}
+
+function Mod({open,onClose,title,w,children}){if(!open)return null;return(
+<div style={Z.ov} onClick={onClose}><div style={{...Z.mb,width:w||"min(600px,94vw)",maxHeight:"90vh",overflow:"auto",resize:"both"}} onClick={e=>e.stopPropagation()}>
+<div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}><h3 style={{margin:0,fontSize:17,color:"#e0d6ff"}}>{title}</h3><button onClick={onClose} style={{background:"none",border:"none",color:"#666",fontSize:22,cursor:"pointer",minWidth:44,minHeight:44,display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button></div>{children}</div></div>)}
+
+/* ─── ChunkItem ─── */
+function CI({c,i,t,onM,onE,onD,onT}){return(
+<div style={{background:c.enabled?"rgba(120,90,255,.1)":"rgba(255,255,255,.02)",border:`1px solid ${c.enabled?"rgba(120,90,255,.28)":"rgba(255,255,255,.06)"}`,borderRadius:8,padding:"10px 10px",marginBottom:6,opacity:c.enabled?1:.5,transition:"all .15s"}}>
+<div style={{display:"flex",alignItems:"center",gap:7}}>
+<div style={{display:"flex",flexDirection:"column",flexShrink:0,gap:2}}>
+<button onClick={()=>onM(c.id,-1)} disabled={i===0} style={{...Z.aV,opacity:i===0?.2:1}}>▲</button>
+<button onClick={()=>onM(c.id,1)} disabled={i===t-1} style={{...Z.aV,opacity:i===t-1?.2:1}}>▼</button></div>
+<div onClick={()=>onT(c.id)} style={{width:22,height:22,borderRadius:5,flexShrink:0,cursor:"pointer",background:c.enabled?"#785aff":"transparent",border:c.enabled?"none":"1.5px solid #555",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,color:"#fff"}}>{c.enabled?"✓":""}</div>
+<div style={{flex:1,minWidth:0,cursor:"pointer"}} onClick={()=>onT(c.id)}>
+<div style={{fontSize:13,fontWeight:600,color:c.enabled?"#c0b0ff":"#777",marginBottom:2}}>{c.label}</div>
+<div style={{fontSize:11,color:"#888",fontFamily:"'JetBrains Mono',monospace",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.text}</div></div>
+<button onClick={()=>onE(c)} style={Z.tB}>✎</button>
+<button onClick={()=>onD(c.id)} style={{...Z.tB,color:"#f55"}}>✕</button></div></div>)}
+
+/* ─── ColPanel ─── */
+function CP({col,ci,tt,chks,lb,oMC,oRC,oDC,oAK,oEK,oDK,oTK,oMK}){
+const p=chks.filter(x=>x.colId===col.id&&x.side==="pos").sort((a,b)=>a.order-b.order);
+const n=chks.filter(x=>x.colId===col.id&&x.side==="neg").sort((a,b)=>a.order-b.order);
+const isC=lb==="c";
+return(<div className="col-panel" style={{minWidth:260,maxWidth:340,flex:"0 0 280px",background:"rgba(255,255,255,.02)",borderRadius:10,border:"1px solid rgba(255,255,255,.06)",display:"flex",flexDirection:"column",overflow:"hidden"}}>
+<div style={{padding:"10px 12px",borderBottom:"1px solid rgba(255,255,255,.06)",display:"flex",alignItems:"center",gap:6,background:isC?"rgba(255,140,60,.05)":"rgba(120,90,255,.05)"}}>
+<button onClick={()=>oMC(col.id,-1)} disabled={ci===0} style={{...Z.aH,opacity:ci===0?.2:1}}>◀</button>
+<button onClick={()=>oMC(col.id,1)} disabled={ci===tt-1} style={{...Z.aH,opacity:ci===tt-1?.2:1}}>▶</button>
+<span style={{fontSize:14,fontWeight:700,color:isC?"#ffb080":"#c8b8ff",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{col.name}</span>
+<button onClick={()=>oRC(col)} style={Z.tB}>✎</button>
+{tt>1&&<button onClick={()=>oDC(col.id)} style={{...Z.tB,color:"#f55"}}>✕</button>}</div>
+<div className="scroll-y" style={{flex:1,padding:"8px 10px"}}>
+<div style={{marginBottom:10}}>
+<div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+<span style={{fontSize:11,fontWeight:700,color:"#785aff",letterSpacing:.5}}>POSITIVE</span>
+<button onClick={()=>oAK(col.id,"pos")} style={{...Z.pB,width:32,height:32}}>+</button></div>
+{p.map((x,i)=><CI key={x.id} c={x} i={i} t={p.length} onM={oMK} onE={oEK} onD={oDK} onT={oTK}/>)}
+{p.length===0&&<div style={Z.eH}>+ 추가</div>}</div>
+<div>
+<div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+<span style={{fontSize:11,fontWeight:700,color:"#f55",letterSpacing:.5}}>NEGATIVE</span>
+<button onClick={()=>oAK(col.id,"neg")} style={{...Z.pB,borderColor:"rgba(255,68,68,.3)",color:"#f88",width:32,height:32}}>+</button></div>
+{n.map((x,i)=><CI key={x.id} c={x} i={i} t={n.length} onM={oMK} onE={oEK} onD={oDK} onT={oTK}/>)}
+{n.length===0&&<div style={Z.eH}>+ 추가</div>}</div></div></div>)}
+
+/* ─── OutBox ─── */
+function OB({label,color,text,cp,onC}){return(<div style={{flex:1,minWidth:220}}>
+<div style={{display:"flex",alignItems:"center",gap:8,marginBottom:5}}>
+<span style={{fontSize:11,fontWeight:700,color,letterSpacing:.5}}>{label}</span>
+<button onClick={onC} style={{background:cp?`#2a5`:`${color}22`,border:"none",borderRadius:5,padding:"4px 12px",color:"#ddd",fontSize:11,cursor:"pointer",fontWeight:600,minHeight:30}}>{cp?"✓":"복사"}</button></div>
+<div style={{background:"rgba(0,0,0,.4)",border:`1px solid ${color}22`,borderRadius:8,padding:"8px 10px",fontSize:12,color:"#aaa",fontFamily:"'JetBrains Mono',monospace",lineHeight:1.5,minHeight:40,maxHeight:80,overflowY:"auto",WebkitOverflowScrolling:"touch",wordBreak:"break-all"}}>{text||<span style={{color:"#444",fontStyle:"italic"}}>없음</span>}</div></div>)}
+
+/* ═══════ APP ═══════ */
+function App(){
+const[D,sD]=useState(()=>{const d=ll(LS,null);return d?.baseCols?d:DD()});
+const[mo,sMo]=useState(null);
+const[cm,sCm]=useState(null);
+const[so,sSo]=useState(false);
+const[cp,sCp]=useState(null);
+const[st,sSt]=useState(false);
+const[ts,sTs]=useState(null);
+const[tp,sTp]=useState(null);
+const[genImg,sGenImg]=useState(null); // generated image URL
+const[genLoading,sGenLoading]=useState(false);
+const[genError,sGenError]=useState(null);
+const[mode,sMode]=useState("txt2img"); // txt2img | img2img | inpaint
+const[baseImg,sBaseImg]=useState(null); // base image URL for img2img
+const[i2iStrength,sI2iStr]=useState(()=>parseFloat(localStorage.getItem("nai-pb-i2i-str"))||0.6);
+const[i2iNoise,sI2iNoise]=useState(()=>parseFloat(localStorage.getItem("nai-pb-i2i-noise"))||0);
+useEffect(()=>{localStorage.setItem("nai-pb-i2i-str",i2iStrength)},[i2iStrength]);
+useEffect(()=>{localStorage.setItem("nai-pb-i2i-noise",i2iNoise)},[i2iNoise]);
+const[pw,sPw]=useState({sidebar:200,base:200,preview:300}); // panel widths
+
+// Resizer drag logic
+const dragRef=useRef(null);
+const onResizeStart=(panel,e)=>{
+  e.preventDefault();
+  const startX=e.touches?e.touches[0].clientX:e.clientX;
+  const startW=pw[panel];
+  const onMove=ev=>{
+    const x=ev.touches?ev.touches[0].clientX:ev.clientX;
+    const delta=x-startX;
+    const limits={sidebar:[120,350],base:[140,400],preview:[180,600]};
+    const[mn,mx]=limits[panel]||[100,500];
+    sPw(p=>({...p,[panel]:Math.max(mn,Math.min(mx,startW+delta))}));
+  };
+  const onUp=()=>{document.removeEventListener("mousemove",onMove);document.removeEventListener("mouseup",onUp);document.removeEventListener("touchmove",onMove);document.removeEventListener("touchend",onUp);document.body.style.cursor="";document.body.style.userSelect=""};
+  document.addEventListener("mousemove",onMove);document.addEventListener("mouseup",onUp);
+  document.addEventListener("touchmove",onMove,{passive:false});document.addEventListener("touchend",onUp);
+  document.body.style.cursor="col-resize";document.body.style.userSelect="none";
+};
+const Rz=({panel})=><div className="resizer" onMouseDown={e=>onResizeStart(panel,e)} onTouchStart={e=>onResizeStart(panel,e)}/>;
+const[anlas,sAnlas]=useState(null); // {anlas, tier, active}
+const[history,sHistory]=useState(()=>ll("nai-pb-hist",[]));
+const[page,sPage]=useState("gen"); // "gen" | "post"
+const[lightbox,sLB]=useState(false);
+const[ipEdit,sIPE]=useState(false); // inpaint editor open
+const[ipStrength,sIPS]=useState(0.7);
+const[ipBrush,sIPB]=useState(40);
+const[ipErase,sIPEr]=useState(false);
+const ipCanvasRef=useRef(null);
+const ipImgRef=useRef(null);
+const ipHistoryRef=useRef([]);
+// Edit canvas state
+const[editMode,sEditMode]=useState(false);
+const[editSrc,sEditSrc]=useState(null); // source image for editor (genImg or history)
+const[editBrush,sEditBrush]=useState(20);
+const[editColor,sEditColor]=useState("#ff0000");
+const[editTool,sEditTool]=useState("brush"); // brush|eraser|eyedropper|blur
+const[editOpacity,sEditOpacity]=useState(1);
+const[editBlurStr,sEditBlurStr]=useState(4);
+const[editZoom,sEditZoom]=useState(1);
+const[editPan,sEditPan]=useState({x:0,y:0});
+const[showCW,sShowCW]=useState(false); // color wheel visible
+const[editLayers,sEditLayers]=useState([]); // [{id,name,visible}] - metadata only
+const[editActiveLayer,sEditActiveLayer]=useState(null);
+const editCanvasRef=useRef(null);
+const editImgRef=useRef(null);
+const editHistoryRef=useRef([]);
+const editWrapRef=useRef(null);
+const editLayerCanvases=useRef({}); // {id: canvasElement} - actual canvas DOMs
+const lR=useRef(),tR=useRef(),cR=useRef(),nR=useRef(),fR=useRef();
+
+const{baseCols,baseChks,chars,activeIds:_aid,settings:se,collapsed}=D;
+const activeIds=_aid||[];
+const activeChars=chars.filter(c=>activeIds.includes(c.id));
+
+// Fix model if not in list (e.g. old localStorage)
+useEffect(()=>{
+  const valid=MO.map(m=>m.v);
+  if(se.model&&!valid.includes(se.model)){
+    console.warn("Stored model invalid:",se.model,"→",MO[0].v);
+    sD(p=>({...p,settings:{...p.settings,model:MO[0].v}}));
+  }
+  // Migrate old selId to activeIds
+  if(D.selId!=null||!Array.isArray(D.activeIds)){
+    sD(p=>({...p,activeIds:p.selId?[p.selId]:(p.activeIds||[]),selId:undefined}));
+  }
+},[]);
+
+useEffect(()=>{ls(LS,D)},[D]);
+useEffect(()=>{ls("nai-pb-hist",history.map(h=>({...h,imgUrl:undefined})).slice(0,50))},[history]);
+useEffect(()=>{if(!se.apiToken)return void sAnlas(null);fetchAnlas(se.apiToken).then(r=>sAnlas(r))},[se.apiToken]);
+
+const tw=m=>{sTs(m);setTimeout(()=>sTs(null),2000)};
+const up=fn=>sD(p=>fn(p));
+
+/* ── Prompt building (base + per-character) ── */
+const buildBasePrompt=s=>{const r=[];baseCols.forEach(col=>{baseChks.filter(c=>c.colId===col.id&&c.side===s&&c.enabled).sort((a,b)=>a.order-b.order).forEach(c=>{if(c.text.trim())r.push(c.text.trim())})});return r.join(", ")};
+const buildCharPrompt=(ch,s)=>{const r=[];ch.cols.forEach(col=>{ch.chks.filter(c=>c.colId===col.id&&c.side===s&&c.enabled).sort((a,b)=>a.order-b.order).forEach(c=>{if(c.text.trim())r.push(c.text.trim())})});return r.join(", ")};
+const pBase=buildBasePrompt("pos"),nBase=buildBasePrompt("neg");
+const charPrompts=activeChars.map(ch=>({name:ch.name,pos:buildCharPrompt(ch,"pos"),neg:buildCharPrompt(ch,"neg"),refs:ch.refs||[]}));
+const pO=[pBase,...charPrompts.map(c=>c.pos)].filter(Boolean).join(", ");
+const nO=[nBase,...charPrompts.map(c=>c.neg)].filter(Boolean).join(", ");
+
+// Debug: log prompt separation
+useEffect(()=>{
+  if(pBase||nBase||charPrompts.length>0){
+    console.log("─── PROMPT DEBUG ───");
+    console.log("BASE POS:",pBase.slice(0,200));
+    console.log("BASE NEG:",nBase.slice(0,200));
+    charPrompts.forEach((cp,i)=>{
+      console.log("CHAR"+i,"["+cp.name+"] POS:",cp.pos.slice(0,100));
+      console.log("CHAR"+i,"["+cp.name+"] NEG:",cp.neg.slice(0,100));
+    });
+  }
+},[pBase,nBase,charPrompts.length]);
+
+/* ── Generate ── */
+const doGenerate=async()=>{
+  if(!se.apiToken){tw("⚠ API 토큰을 설정하세요");return}
+  if(!pBase.trim()&&charPrompts.every(c=>!c.pos.trim())){tw("⚠ 프롬프트가 비어 있습니다");return}
+  if(mode==="img2img"&&!baseImg){tw("⚠ Base Image가 없습니다");return}
+  sGenLoading(true);sGenError(null);
+  try{
+    const vibeRefs=activeChars.flatMap(c=>c.refs||[]);
+    let url;
+    if(mode==="img2img"&&baseImg){
+      // Convert blob URL to proper PNG base64
+      const resp=await fetch(baseImg);const blob=await resp.blob();
+      // Draw to canvas to ensure PNG format
+      const img=new Image();const blobUrl=URL.createObjectURL(blob);
+      await new Promise((res,rej)=>{img.onload=res;img.onerror=rej;img.src=blobUrl});
+      const cv=document.createElement("canvas");cv.width=se.width;cv.height=se.height;
+      cv.getContext("2d").drawImage(img,0,0,se.width,se.height);
+      URL.revokeObjectURL(blobUrl);
+      const imgB64=cv.toDataURL("image/png").replace(/^data:[^;]+;base64,/,"");
+      url=await generateImage(se.apiToken,se,pBase,nBase,charPrompts,vibeRefs,{image:imgB64,strength:i2iStrength,noise:i2iNoise});
+    }else{
+      url=await generateImage(se.apiToken,se,pBase,nBase,charPrompts,vibeRefs);
+    }
+    sGenImg(url);
+    const est=estimateAnlas(se,se.tier>=3,vibeRefs.length,mode==="img2img"?"img2img":"generate");
+    if(!est.free&&est.cost>0){up(p=>({...p,settings:{...p.settings,anlasBalance:Math.max(0,(p.settings.anlasBalance||0)-est.cost)}}))}
+    const entry={id:G(),date:new Date().toISOString(),prompt:pBase.slice(0,100),neg:nBase.slice(0,60),model:se.model,w:se.width,h:se.height,steps:se.steps,char:activeChars.map(c=>c.name).join(",")||"",seed:se.seed||"random",thumb:null,imgUrl:url};
+    // Generate thumbnail async
+    try{const resp2=await fetch(url);const blob2=await resp2.blob();
+      const img2=new Image();const u2=URL.createObjectURL(blob2);
+      await new Promise(r=>{img2.onload=r;img2.src=u2});
+      const tc=document.createElement("canvas");tc.width=120;tc.height=Math.round(120*se.height/se.width);
+      tc.getContext("2d").drawImage(img2,0,0,tc.width,tc.height);
+      entry.thumb=tc.toDataURL("image/webp",0.5);URL.revokeObjectURL(u2);
+    }catch(ex){}
+    sHistory(p=>[entry,...p].slice(0,50));
+    fetchAnlas(se.apiToken).then(r=>sAnlas(r));
+    tw(mode==="img2img"?"img2img 완료!":"생성 완료!");
+  }catch(e){sGenError(e.message);tw("⚠ 생성 실패")}finally{sGenLoading(false)}
+};
+
+const downloadImg=async()=>{
+  if(!genImg)return;
+  const resp=await fetch(genImg);
+  const blob=await resp.blob();
+  const fmt=se.format||"png";
+  let finalBlob=blob;
+  if(fmt==="webp"&&blob.type!=="image/webp"){
+    // Convert to webp via canvas
+    const img=new Image();const url=URL.createObjectURL(blob);
+    await new Promise(r=>{img.onload=r;img.src=url});
+    const cv=document.createElement("canvas");cv.width=img.width;cv.height=img.height;
+    cv.getContext("2d").drawImage(img,0,0);
+    finalBlob=await new Promise(r=>cv.toBlob(r,"image/webp",.95));
+    URL.revokeObjectURL(url);
+  }
+  const a=document.createElement("a");a.href=URL.createObjectURL(finalBlob);
+  a.download=`nai_${Date.now()}.${fmt}`;a.click();URL.revokeObjectURL(a.href);
+};
+
+/* ── Image Upload as Base ── */
+const uploadBaseImg=()=>{
+  const inp=document.createElement("input");inp.type="file";inp.accept="image/*";
+  inp.onchange=e=>{
+    const f=e.target.files[0];if(!f)return;
+    const url=URL.createObjectURL(f);
+    sBaseImg(url);sMode("img2img");tw("이미지 로드됨 → img2img 모드");
+  };
+  inp.click();
+};
+const handleDrop=(e)=>{
+  e.preventDefault();e.stopPropagation();
+  const f=e.dataTransfer?.files?.[0];
+  if(!f||!f.type.startsWith("image/"))return;
+  const url=URL.createObjectURL(f);
+  sBaseImg(url);sMode("img2img");tw("이미지 드롭 → img2img 모드");
+};
+const handleDragOver=(e)=>{e.preventDefault();e.stopPropagation()};
+
+/* ── Inpaint Canvas Helpers ── */
+const ipDrawing=useRef(false);
+const initIpCanvas=useCallback(()=>{
+  const cv=ipCanvasRef.current;const img=ipImgRef.current;
+  if(!cv||!img)return;
+  cv.width=se.width;cv.height=se.height;
+  const ctx=cv.getContext("2d");ctx.clearRect(0,0,cv.width,cv.height);
+  ipHistoryRef.current=[];
+},[se.width,se.height]);
+
+useEffect(()=>{if(ipEdit&&genImg)setTimeout(initIpCanvas,100)},[ipEdit,genImg,initIpCanvas]);
+
+const getIpXY=(e)=>{
+  const cv=ipCanvasRef.current;if(!cv)return{x:0,y:0};
+  const r=cv.getBoundingClientRect();
+  const t=e.touches?e.touches[0]:e;
+  return{x:(t.clientX-r.left)/r.width*cv.width,y:(t.clientY-r.top)/r.height*cv.height};
+};
+const ipSaveSnap=()=>{
+  const cv=ipCanvasRef.current;if(!cv)return;
+  ipHistoryRef.current.push(cv.getContext("2d").getImageData(0,0,cv.width,cv.height));
+  if(ipHistoryRef.current.length>30)ipHistoryRef.current.shift();
+};
+const ipStartDraw=(e)=>{e.preventDefault();ipSaveSnap();ipDrawing.current=true;ipDraw(e)};
+const ipDraw=(e)=>{
+  e.preventDefault();if(!ipDrawing.current)return;
+  const cv=ipCanvasRef.current;if(!cv)return;
+  const ctx=cv.getContext("2d");const{x,y}=getIpXY(e);
+  ctx.globalCompositeOperation=ipErase?"destination-out":"source-over";
+  ctx.fillStyle="rgba(60,120,255,0.45)";
+  ctx.beginPath();ctx.arc(x,y,ipBrush/2,0,Math.PI*2);ctx.fill();
+};
+const ipStopDraw=()=>{ipDrawing.current=false};
+const ipClear=()=>{const cv=ipCanvasRef.current;if(cv)cv.getContext("2d").clearRect(0,0,cv.width,cv.height);ipHistoryRef.current=[]};
+const ipUndo=()=>{
+  const cv=ipCanvasRef.current;if(!cv)return;
+  const h=ipHistoryRef.current;if(h.length===0){cv.getContext("2d").clearRect(0,0,cv.width,cv.height);return}
+  cv.getContext("2d").putImageData(h.pop(),0,0);
+};
+const getMaskB64=()=>{
+  const cv=ipCanvasRef.current;if(!cv)return null;
+  const w=cv.width,h=cv.height;
+  const src=cv.getContext("2d").getImageData(0,0,w,h);
+  const out=document.createElement("canvas");out.width=w;out.height=h;
+  const octx=out.getContext("2d");const od=octx.createImageData(w,h);
+  for(let i=0;i<src.data.length;i+=4){
+    const hasMask=src.data[i+3]>20;
+    od.data[i]=od.data[i+1]=od.data[i+2]=hasMask?255:0;od.data[i+3]=255;
+  }
+  octx.putImageData(od,0,0);
+  return out.toDataURL("image/png").replace(/^data:image\/png;base64,/,"");
+};
+const getImgB64=async()=>{
+  if(!genImg)return null;
+  const resp=await fetch(genImg);const blob=await resp.blob();
+  const img=new Image();const blobUrl=URL.createObjectURL(blob);
+  await new Promise((res)=>{img.onload=res;img.src=blobUrl});
+  const cv=document.createElement("canvas");cv.width=se.width;cv.height=se.height;
+  cv.getContext("2d").drawImage(img,0,0,se.width,se.height);
+  URL.revokeObjectURL(blobUrl);
+  return cv.toDataURL("image/png").replace(/^data:[^;]+;base64,/,"");
+};
+const execInpaint=async()=>{
+  if(!se.apiToken||!genImg)return;
+  const maskB64=getMaskB64();if(!maskB64){tw("⚠ 마스크를 그려주세요");return}
+  const imgB64=await getImgB64();if(!imgB64)return;
+  sIPE(false);sGenLoading(true);sGenError(null);
+  try{
+    const url=await doInpaint(se.apiToken,se,pBase||pO,nBase||nO,imgB64,maskB64,ipStrength);
+    sGenImg(url);tw("인페인트 완료!");
+  }catch(e){sGenError(e.message);tw("⚠ 인페인트 실패")}finally{sGenLoading(false)}
+};
+
+/* ── Edit Canvas Helpers (Enhanced) ── */
+const editDrawing=useRef(false);
+const editLastPos=useRef(null);
+const editPinch=useRef(null);
+const editStrokeCanvas=useRef(null);
+
+const addEditLayer=(name)=>{
+  const cv=document.createElement("canvas");cv.width=se.width;cv.height=se.height;
+  const id=G();
+  editLayerCanvases.current[id]=cv;
+  sEditLayers(p=>[...p,{id,name:name||("레이어 "+(p.length+1)),visible:true}]);
+  sEditActiveLayer(id);return id;
+};
+const initEditCanvas=useCallback(()=>{
+  editLayerCanvases.current={};editStrokeCanvas.current=null;
+  sEditLayers([]);sEditActiveLayer(null);editHistoryRef.current=[];
+  sEditZoom(1);sEditPan({x:0,y:0});
+  setTimeout(()=>{
+    const cv=document.createElement("canvas");cv.width=se.width;cv.height=se.height;
+    const id=G();
+    editLayerCanvases.current[id]=cv;
+    sEditLayers([{id,name:"레이어 1",visible:true}]);sEditActiveLayer(id);
+  },50);
+},[se.width,se.height]);
+
+const editImg=editSrc||genImg;
+useEffect(()=>{if(editMode&&editImg)initEditCanvas()},[editMode,editImg,initEditCanvas]);
+
+// Composite all visible layers to display canvas
+const compositeEdit=()=>{
+  const cv=editCanvasRef.current;if(!cv)return;
+  const ctx=cv.getContext("2d");
+  cv.width=se.width;cv.height=se.height;
+  ctx.clearRect(0,0,cv.width,cv.height);
+  editLayers.forEach(l=>{
+    if(l.visible){const lcv=editLayerCanvases.current[l.id];if(lcv)ctx.drawImage(lcv,0,0)}
+  });
+  // Show stroke preview while drawing (with target opacity)
+  if(editStrokeCanvas.current&&editDrawing.current){
+    ctx.globalAlpha=(editTool==="bgremove")?0.35:editOpacity;
+    ctx.drawImage(editStrokeCanvas.current,0,0);
+    ctx.globalAlpha=1;
+  }
+};
+useEffect(()=>{if(editMode)compositeEdit()},[editMode,editLayers,editActiveLayer]);
+
+const getActiveCanvas=()=>editLayerCanvases.current[editActiveLayer]||null;
+
+const getEditXY=(e)=>{
+  const wrap=editWrapRef.current;if(!wrap)return{x:0,y:0};
+  const r=wrap.getBoundingClientRect();
+  const t=e.touches?e.touches[0]:e;
+  return{x:(t.clientX-r.left)/r.width*se.width,y:(t.clientY-r.top)/r.height*se.height};
+};
+
+const editSaveSnap=()=>{
+  const acv=getActiveCanvas();if(!acv)return;
+  const data=acv.getContext("2d",{willReadFrequently:true}).getImageData(0,0,acv.width,acv.height);
+  editHistoryRef.current.push({layerId:editActiveLayer,data});
+  if(editHistoryRef.current.length>50)editHistoryRef.current.shift();
+};
+
+// Ctrl+Alt drag brush resize
+const brushResizing=useRef(null);
+const[brushPreview,sBrushPreview]=useState(null);
+
+// Eyedropper helper
+const doEyedrop=(e)=>{
+  const{x,y}=getEditXY(e);
+  const tmp=document.createElement("canvas");tmp.width=se.width;tmp.height=se.height;
+  const tctx=tmp.getContext("2d");
+  const img=editImgRef.current;if(img)tctx.drawImage(img,0,0,se.width,se.height);
+  editLayers.forEach(l=>{if(l.visible){const lcv=editLayerCanvases.current[l.id];if(lcv)tctx.drawImage(lcv,0,0)}});
+  const px=tctx.getImageData(Math.max(0,Math.min(se.width-1,Math.round(x))),Math.max(0,Math.min(se.height-1,Math.round(y))),1,1).data;
+  const hex="#"+[px[0],px[1],px[2]].map(v=>v.toString(16).padStart(2,"0")).join("");
+  sEditColor(hex);tw("색상 추출: "+hex);
+};
+
+const editStartDraw=(e)=>{
+  // Right-click = eyedropper (desktop)
+  if(e.button===2){e.preventDefault();doEyedrop(e);return}
+  // Command/Ctrl + click = eyedropper (iPad keyboard / desktop)
+  if((e.metaKey||e.ctrlKey)&&!e.altKey){
+    e.preventDefault();doEyedrop(e);return;
+  }
+  // Ctrl+Alt drag = brush resize
+  if((e.ctrlKey||e.metaKey)&&e.altKey&&!e.touches){
+    e.preventDefault();
+    const r=editWrapRef.current?.getBoundingClientRect();
+    brushResizing.current={startX:e.clientX,startSize:editBrush};
+    sBrushPreview({x:e.clientX-(r?.left||0),y:e.clientY-(r?.top||0),size:editBrush});
+    const onMove=(ev)=>{
+      const dx=ev.clientX-brushResizing.current.startX;
+      const ns=Math.max(1,Math.min(100,brushResizing.current.startSize+Math.round(dx/2)));
+      sEditBrush(ns);sBrushPreview(p=>p?{...p,size:ns}:null);
+    };
+    const onUp=()=>{brushResizing.current=null;sBrushPreview(null);document.removeEventListener("mousemove",onMove);document.removeEventListener("mouseup",onUp)};
+    document.addEventListener("mousemove",onMove);document.addEventListener("mouseup",onUp);
+    return;
+  }
+  if(e.touches&&e.touches.length===2){e.preventDefault();editUndo();return}
+  if(e.touches&&e.touches.length>1)return;
+  e.preventDefault();
+  if(editTool==="eyedropper"){
+    doEyedrop(e);sEditTool("brush");
+    return;
+  }
+  editSaveSnap();editDrawing.current=true;editDoDraw(e);
+};
+
+const editDoDraw=(e)=>{
+  e.preventDefault();if(!editDrawing.current)return;
+  const acv=getActiveCanvas();if(!acv)return;
+  const{x,y}=getEditXY(e);
+
+  if(editTool==="blur"){
+    const ctx=acv.getContext("2d");
+    const r=Math.max(2,Math.floor(editBrush/2));
+    const sr=Math.max(1,Math.floor(editBlurStr));
+    const tmp=document.createElement("canvas");tmp.width=se.width;tmp.height=se.height;
+    const tctx=tmp.getContext("2d");
+    const img=editImgRef.current;if(img)tctx.drawImage(img,0,0,se.width,se.height);
+    editLayers.forEach(l=>{if(l.visible){const lcv=editLayerCanvases.current[l.id];if(lcv)tctx.drawImage(lcv,0,0)}});
+    const ix=Math.max(0,Math.round(x)-r),iy=Math.max(0,Math.round(y)-r);
+    const iw=Math.min(r*2,se.width-ix),ih=Math.min(r*2,se.height-iy);
+    if(iw<=0||ih<=0)return;
+    const sm=document.createElement("canvas");sm.width=Math.max(1,Math.round(iw/sr));sm.height=Math.max(1,Math.round(ih/sr));
+    sm.getContext("2d").drawImage(tmp,ix,iy,iw,ih,0,0,sm.width,sm.height);
+    ctx.globalCompositeOperation="source-over";ctx.globalAlpha=0.7;
+    ctx.drawImage(sm,0,0,sm.width,sm.height,ix,iy,iw,ih);
+    ctx.globalAlpha=1;
+  }else{
+    // All other tools: draw to stroke canvas for uniform opacity
+    if(!editStrokeCanvas.current){
+      editStrokeCanvas.current=document.createElement("canvas");
+      editStrokeCanvas.current.width=se.width;editStrokeCanvas.current.height=se.height;
+    }
+    const sctx=editStrokeCanvas.current.getContext("2d");
+    if(editTool==="eraser"){
+      // Eraser draws directly to layer
+      const ctx=acv.getContext("2d");
+      ctx.globalCompositeOperation="destination-out";ctx.globalAlpha=1;
+      ctx.lineWidth=editBrush;ctx.lineCap="round";ctx.lineJoin="round";
+      if(editLastPos.current){ctx.beginPath();ctx.moveTo(editLastPos.current.x,editLastPos.current.y);ctx.lineTo(x,y);ctx.stroke()}
+      else{ctx.beginPath();ctx.arc(x,y,editBrush/2,0,Math.PI*2);ctx.fill()}
+    }else if(editTool==="bgremove"){
+      sctx.globalCompositeOperation="source-over";sctx.globalAlpha=1;
+      sctx.strokeStyle="#00ff88";sctx.fillStyle="#00ff88";
+      sctx.lineWidth=editBrush;sctx.lineCap="round";sctx.lineJoin="round";
+      if(editLastPos.current){sctx.beginPath();sctx.moveTo(editLastPos.current.x,editLastPos.current.y);sctx.lineTo(x,y);sctx.stroke()}
+      else{sctx.beginPath();sctx.arc(x,y,editBrush/2,0,Math.PI*2);sctx.fill()}
+    }else{
+      // Brush: draw at full opacity to stroke canvas
+      sctx.globalCompositeOperation="source-over";sctx.globalAlpha=1;
+      sctx.strokeStyle=editColor;sctx.fillStyle=editColor;
+      sctx.lineWidth=editBrush;sctx.lineCap="round";sctx.lineJoin="round";
+      if(editLastPos.current){sctx.beginPath();sctx.moveTo(editLastPos.current.x,editLastPos.current.y);sctx.lineTo(x,y);sctx.stroke()}
+      else{sctx.beginPath();sctx.arc(x,y,editBrush/2,0,Math.PI*2);sctx.fill()}
+    }
+  }
+  editLastPos.current={x,y};
+  compositeEdit();
+};
+
+const editStopDraw=()=>{
+  // On stroke end: composite stroke canvas onto active layer with opacity
+  if(editDrawing.current&&editStrokeCanvas.current&&editTool!=="eraser"&&editTool!=="blur"){
+    const acv=getActiveCanvas();
+    if(acv){
+      const ctx=acv.getContext("2d");
+      ctx.globalCompositeOperation="source-over";
+      ctx.globalAlpha=(editTool==="bgremove")?0.35:editOpacity;
+      ctx.drawImage(editStrokeCanvas.current,0,0);
+      ctx.globalAlpha=1;
+    }
+    // Clear stroke canvas
+    editStrokeCanvas.current.getContext("2d").clearRect(0,0,editStrokeCanvas.current.width,editStrokeCanvas.current.height);
+    compositeEdit();
+  }
+  editDrawing.current=false;editLastPos.current=null;
+};
+
+const editClear=()=>{
+  const acv=getActiveCanvas();if(acv)acv.getContext("2d").clearRect(0,0,acv.width,acv.height);
+  if(editStrokeCanvas.current)editStrokeCanvas.current.getContext("2d").clearRect(0,0,editStrokeCanvas.current.width,editStrokeCanvas.current.height);
+  editHistoryRef.current=[];compositeEdit();
+};
+const editUndo=()=>{
+  const h=editHistoryRef.current;if(h.length===0)return;
+  const snap=h.pop();
+  const lcv=editLayerCanvases.current[snap.layerId];
+  if(lcv)lcv.getContext("2d").putImageData(snap.data,0,0);
+  compositeEdit();
+};
+
+// Pinch zoom + pan
+const editTouchStart=(e)=>{
+  if(e.touches.length===2){
+    e.preventDefault();
+    const t=e.touches;
+    const dist=Math.hypot(t[0].clientX-t[1].clientX,t[0].clientY-t[1].clientY);
+    const cx=(t[0].clientX+t[1].clientX)/2;
+    const cy=(t[0].clientY+t[1].clientY)/2;
+    editPinch.current={dist,cx,cy,zoom:editZoom,pan:{...editPan}};
+    return;
+  }
+  editStartDraw(e);
+};
+const editTouchMove=(e)=>{
+  if(e.touches.length===2&&editPinch.current){
+    e.preventDefault();
+    const t=e.touches;
+    const dist=Math.hypot(t[0].clientX-t[1].clientX,t[0].clientY-t[1].clientY);
+    const scale=dist/editPinch.current.dist;
+    const newZoom=Math.max(0.25,Math.min(5,editPinch.current.zoom*scale));
+    const cx=(t[0].clientX+t[1].clientX)/2;
+    const cy=(t[0].clientY+t[1].clientY)/2;
+    sEditZoom(newZoom);
+    sEditPan({x:editPinch.current.pan.x+(cx-editPinch.current.cx),y:editPinch.current.pan.y+(cy-editPinch.current.cy)});
+    return;
+  }
+  editDoDraw(e);
+};
+const editTouchEnd=(e)=>{
+  if(editPinch.current&&e.touches.length<2)editPinch.current=null;
+  editStopDraw();
+};
+
+// Keyboard
+useEffect(()=>{
+  if(!editMode)return;
+  const fn=(e)=>{
+    if((e.ctrlKey||e.metaKey)&&e.key==="z"){e.preventDefault();
+      // Call undo via ref to avoid stale closure
+      const h=editHistoryRef.current;if(h.length===0)return;
+      const snap=h.pop();
+      const lcv=editLayerCanvases.current[snap.layerId];
+      if(lcv)lcv.getContext("2d").putImageData(snap.data,0,0);
+      // Force re-composite via display canvas
+      const cv=editCanvasRef.current;if(cv){const ctx=cv.getContext("2d");cv.width=se.width;cv.height=se.height;ctx.clearRect(0,0,cv.width,cv.height);
+        Object.keys(editLayerCanvases.current).forEach(id=>{const lcv2=editLayerCanvases.current[id];if(lcv2)ctx.drawImage(lcv2,0,0)});
+      }
+    }
+    else if(e.key==="["){e.preventDefault();sEditBrush(b=>Math.max(1,b-(e.shiftKey?10:3)))}
+    else if(e.key==="]"){e.preventDefault();sEditBrush(b=>Math.min(100,b+(e.shiftKey?10:3)))}
+  };
+  window.addEventListener("keydown",fn);
+  return()=>window.removeEventListener("keydown",fn);
+},[editMode,se.width,se.height]);
+
+const editWheel=(e)=>{e.preventDefault();sEditZoom(z=>Math.max(0.25,Math.min(5,z*(e.deltaY>0?0.9:1.1))))};
+
+const editApply=()=>{
+  if(!editImg)return;
+  const img=editImgRef.current;if(!img)return;
+  const out=document.createElement("canvas");out.width=se.width;out.height=se.height;
+  const ctx=out.getContext("2d");
+  ctx.drawImage(img,0,0,se.width,se.height);
+  editLayers.forEach(l=>{if(l.visible){const lcv=editLayerCanvases.current[l.id];if(lcv)ctx.drawImage(lcv,0,0)}});
+  out.toBlob(blob=>{
+    const url=URL.createObjectURL(blob);
+    sBaseImg(url);sMode("img2img");sEditMode(false);sEditSrc(null);
+    tw("편집 적용 → Base Image 설정됨");
+  },"image/png");
+};
+
+// Selective bg-removal: paint mask → send full image → composite only in mask area
+const[bgRemoving,sBgRemoving]=useState(false);
+const[bgProgress,sBgProgress]=useState("");
+
+const editBgRemove=async(mode)=>{
+  // mode: "nai" | "local"
+  if(mode==="nai"&&!se.apiToken){tw("⚠ API 토큰 필요");return}
+  const acv=getActiveCanvas();if(!acv){tw("⚠ 레이어를 선택하세요");return}
+  const img=editImgRef.current;if(!img)return;
+  // Check mask
+  const aCtx=acv.getContext("2d",{willReadFrequently:true});
+  const aData=aCtx.getImageData(0,0,acv.width,acv.height);
+  let hasMask=false;for(let i=3;i<aData.data.length;i+=4){if(aData.data[i]>20){hasMask=true;break}}
+  // Build composite image (without active layer's mask)
+  const full=document.createElement("canvas");full.width=se.width;full.height=se.height;
+  const fCtx=full.getContext("2d");
+  fCtx.drawImage(img,0,0,se.width,se.height);
+  editLayers.forEach(l=>{if(l.visible&&l.id!==editActiveLayer){const lcv=editLayerCanvases.current[l.id];if(lcv)fCtx.drawImage(lcv,0,0)}});
+
+  sBgRemoving(true);sBgProgress("준비 중...");
+  try{
+    let bgImg;
+    if(mode==="local"){
+      // Local ONNX removal
+      const blob=await new Promise(r=>full.toBlob(r,"image/png"));
+      const resultBlob=await localBgRemove(blob,msg=>sBgProgress(msg));
+      const bUrl=URL.createObjectURL(resultBlob);
+      bgImg=new Image();
+      await new Promise((res,rej)=>{bgImg.onload=res;bgImg.onerror=rej;bgImg.src=bUrl});
+      URL.revokeObjectURL(bUrl);
+    }else{
+      // NAI API removal
+      sBgProgress("NAI API 호출 중...");
+      const b64=full.toDataURL("image/png").replace(/^data:[^;]+;base64,/,"");
+      const resultUrl=await augmentImage(se.apiToken,"bg-removal",se.width,se.height,b64);
+      const resp=await fetch(resultUrl);const blob=await resp.blob();
+      bgImg=new Image();const bUrl=URL.createObjectURL(blob);
+      await new Promise(r=>{bgImg.onload=r;bgImg.src=bUrl});
+      URL.revokeObjectURL(bUrl);
+    }
+
+    // Apply result
+    editSaveSnap();
+    aCtx.clearRect(0,0,acv.width,acv.height);
+    aCtx.drawImage(bgImg,0,0,se.width,se.height);
+
+    if(hasMask){
+      // Clip to mask area only
+      const resultData=aCtx.getImageData(0,0,acv.width,acv.height);
+      for(let i=0;i<aData.data.length;i+=4){
+        if(aData.data[i+3]<20) resultData.data[i+3]=0;
+      }
+      aCtx.putImageData(resultData,0,0);
+      tw("선택 영역 배경 제거 완료!");
+    }else{
+      tw("전체 이미지 배경 제거 완료!");
+    }
+    compositeEdit();
+  }catch(e){tw("⚠ 배경 제거 실패: "+e.message);console.error(e)}
+  finally{sBgRemoving(false);sBgProgress("")}
+};
+
+/* ── Char ops ── */
+const toggleChar=id=>up(p=>{
+  const ids=p.activeIds||[];
+  return{...p,activeIds:ids.includes(id)?ids.filter(x=>x!==id):[...ids,id]};
+});
+const oAC=()=>{sTp(null);sCm({t:"a"})};
+const oEC=ch=>{sTp(ch.thumbnail||null);sCm({t:"e",c:ch})};
+const svC=()=>{const nm=cR.current?.value.trim();if(!nm)return;const nt=nR.current?.value||"";
+if(cm.t==="a"){const id=G();up(p=>({...p,chars:[...p.chars,{id,name:nm,thumbnail:tp||"",refs:[],cols:[{id:G(),name:nm+" 기본"}],chks:[],notes:nt}]}))
+}else{const cid=cm.c.id;up(p=>({...p,chars:p.chars.map(c=>c.id===cid?{...c,name:nm,thumbnail:tp||c.thumbnail,notes:nt}:c)}))}sCm(null)};
+const dC=id=>{if(!confirm("삭제?"))return;up(p=>({...p,chars:p.chars.filter(c=>c.id!==id),activeIds:(p.activeIds||[]).filter(x=>x!==id)}))};
+const hTU=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=v=>sTp(v.target.result);r.readAsDataURL(f)};
+
+/* ── Ref images ── */
+const aRI=cid=>{const i=document.createElement("input");i.type="file";i.accept="image/*";i.onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=v=>{up(p=>({...p,chars:p.chars.map(c=>c.id===cid?{...c,refs:[...c.refs,{id:G(),d:v.target.result,s:.6,ie:1}]}:c)}))};r.readAsDataURL(f)};i.click()};
+const rRI=(cid,rid)=>up(p=>({...p,chars:p.chars.map(c=>c.id===cid?{...c,refs:c.refs.filter(r=>r.id!==rid)}:c)}));
+const uRI=(cid,rid,f,v)=>up(p=>({...p,chars:p.chars.map(c=>c.id===cid?{...c,refs:c.refs.map(r=>r.id===rid?{...r,[f]:v}:r)}:c)}));
+
+/* ── Col/Chunk ops ── */
+const aC=tg=>sMo({t:"ac",tg});
+const mC=(tg,id,d)=>up(p=>{
+  if(tg==="b"){const c=[...p.baseCols];const i=c.findIndex(x=>x.id===id);const j=i+d;if(j<0||j>=c.length)return p;[c[i],c[j]]=[c[j],c[i]];return{...p,baseCols:c}}
+  return{...p,chars:p.chars.map(ch=>{if(ch.id!==tg)return ch;const c=[...ch.cols];const i=c.findIndex(x=>x.id===id);const j=i+d;if(j<0||j>=c.length)return ch;[c[i],c[j]]=[c[j],c[i]];return{...ch,cols:c}})}});
+const rC=(tg,col)=>sMo({t:"rc",tg,d:col});
+const dCC=(tg,id)=>up(p=>{
+  if(tg==="b")return{...p,baseCols:p.baseCols.filter(c=>c.id!==id),baseChks:p.baseChks.filter(c=>c.colId!==id)};
+  return{...p,chars:p.chars.map(ch=>ch.id!==tg?ch:{...ch,cols:ch.cols.filter(c=>c.id!==id),chks:ch.chks.filter(c=>c.colId!==id)})}});
+const aK=(tg,cid,si)=>sMo({t:"ak",tg,d:{cid,si}});
+const eK=(tg,ch)=>sMo({t:"ek",tg,d:ch});
+const dK=(tg,id)=>up(p=>{if(tg==="b")return{...p,baseChks:p.baseChks.filter(c=>c.id!==id)};return{...p,chars:p.chars.map(ch=>ch.id!==tg?ch:{...ch,chks:ch.chks.filter(c=>c.id!==id)})}});
+const tK=(tg,id)=>up(p=>{if(tg==="b")return{...p,baseChks:p.baseChks.map(c=>c.id===id?{...c,enabled:!c.enabled}:c)};return{...p,chars:p.chars.map(ch=>ch.id!==tg?ch:{...ch,chks:ch.chks.map(c=>c.id===id?{...c,enabled:!c.enabled}:c)})}});
+const mK=(tg,id,d)=>up(p=>{
+  const chks=tg==="b"?p.baseChks:p.chars.find(c=>c.id===tg)?.chks||[];
+  const ch=chks.find(c=>c.id===id);if(!ch)return p;
+  const si=chks.filter(c=>c.colId===ch.colId&&c.side===ch.side).sort((a,b)=>a.order-b.order);
+  const idx=si.findIndex(c=>c.id===id);const nxt=idx+d;if(nxt<0||nxt>=si.length)return p;
+  const sw=si[nxt].id;const mo2=ch.order;const so2=si[nxt].order;
+  const u=chks.map(c=>{if(c.id===id)return{...c,order:so2};if(c.id===sw)return{...c,order:mo2};return c});
+  if(tg==="b")return{...p,baseChks:u};return{...p,chars:p.chars.map(ch2=>ch2.id!==tg?ch2:{...ch2,chks:u})}});
+
+/* ── Modal save ── */
+const hSv=()=>{if(!mo)return;const lb=lR.current?.value.trim();const tx=tR.current?.value.trim();const{t,tg,d}=mo;
+if(t==="ac"){if(!lb)return;up(p=>{if(tg==="b")return{...p,baseCols:[...p.baseCols,{id:G(),name:lb}]};return{...p,chars:p.chars.map(ch=>ch.id!==tg?ch:{...ch,cols:[...ch.cols,{id:G(),name:lb}]})}})}
+else if(t==="rc"){if(!lb)return;up(p=>{if(tg==="b")return{...p,baseCols:p.baseCols.map(c=>c.id===d.id?{...c,name:lb}:c)};return{...p,chars:p.chars.map(ch=>ch.id!==tg?ch:{...ch,cols:ch.cols.map(c=>c.id===d.id?{...c,name:lb}:c)})}})}
+else if(t==="ak"){if(!lb||!tx)return;up(p=>{const chks=tg==="b"?p.baseChks:p.chars.find(c=>c.id===tg)?.chks||[];const gr=chks.filter(c=>c.colId===d.cid&&c.side===d.si);const mx=gr.length>0?Math.max(...gr.map(c=>c.order))+1:0;const nk={id:G(),colId:d.cid,side:d.si,label:lb,text:tx,enabled:true,order:mx};if(tg==="b")return{...p,baseChks:[...p.baseChks,nk]};return{...p,chars:p.chars.map(ch=>ch.id!==tg?ch:{...ch,chks:[...ch.chks,nk]})}})}
+else if(t==="ek"){if(!lb||!tx)return;up(p=>{if(tg==="b")return{...p,baseChks:p.baseChks.map(c=>c.id===d.id?{...c,label:lb,text:tx}:c)};return{...p,chars:p.chars.map(ch=>ch.id!==tg?ch:{...ch,chks:ch.chks.map(c=>c.id===d.id?{...c,label:lb,text:tx}:c)})}})}
+sMo(null)};
+
+/* ── Output helpers ── */
+const cy=async(t,w)=>{try{await navigator.clipboard.writeText(t);sCp(w);setTimeout(()=>sCp(null),1500)}catch{}};
+const hEx=async()=>{if(await exF(JSON.stringify(D,null,2),se.defaultFilename||"nai-pb"))tw("내보내기 완료!")};
+const hIm=async()=>{const d=await imF();if(!d)return;if(d.baseCols)sD(d);tw("가져오기 완료!")};
+
+const isTx=mo?.t==="ak"||mo?.t==="ek";
+const mTi={ac:"열 추가",rc:"열 이름 변경",ak:"청크 추가",ek:"청크 수정"}[mo?.t]||"";
+const dLb=mo?.t==="rc"?mo.d.name:mo?.t==="ek"?mo.d.label:"";
+const dTx=mo?.t==="ek"?mo.d.text:"";
+
+return(
+<div style={{height:"100dvh",display:"flex",flexDirection:"column"}}>
+{genLoading&&<div className="gen-loadbar"/>}
+{ts&&<div style={{position:"fixed",top:14,left:"50%",transform:"translateX(-50%)",zIndex:9999,background:"#785aff",color:"#fff",padding:"7px 18px",borderRadius:7,fontSize:12,fontWeight:600,boxShadow:"0 4px 20px rgba(0,0,0,.4)"}}>{ts}</div>}
+
+{/* HEADER */}
+<div style={{padding:"14px 18px",borderBottom:"1px solid rgba(120,90,255,.15)",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
+<div><h1 style={{margin:0,fontSize:20,fontWeight:700,background:"linear-gradient(135deg,#b095ff,#785aff,#ff6b9d)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",display:"inline"}}>NAI Prompt Builder</h1>
+<div style={{display:"flex",gap:2,marginTop:6}}>
+<button onClick={()=>sPage("gen")} style={{fontSize:11,fontWeight:600,padding:"4px 14px",borderRadius:"6px 6px 0 0",border:"1px solid rgba(120,90,255,.15)",borderBottom:page==="gen"?"1px solid transparent":"1px solid rgba(120,90,255,.15)",background:page==="gen"?"rgba(120,90,255,.1)":"transparent",color:page==="gen"?"#b095ff":"#555",cursor:"pointer"}}>🎨 생성</button>
+<button onClick={()=>sPage("post")} style={{fontSize:11,fontWeight:600,padding:"4px 14px",borderRadius:"6px 6px 0 0",border:"1px solid rgba(120,90,255,.15)",borderBottom:page==="post"?"1px solid transparent":"1px solid rgba(120,90,255,.15)",background:page==="post"?"rgba(120,90,255,.1)":"transparent",color:page==="post"?"#b095ff":"#555",cursor:"pointer"}}>📋 후처리 <span style={{fontSize:9,opacity:.7}}>({history.length})</span></button>
+</div></div>
+<div style={{display:"flex",gap:8,alignItems:"center"}}>
+{anlas!==null&&typeof anlas.anlas==="number"&&<div className="anlas-badge" title="API 조회">💎 {anlas.anlas.toLocaleString()}</div>}
+{(anlas===null||typeof anlas.anlas!=="number")&&<div className="anlas-badge">💎 {(se.anlasBalance||0).toLocaleString()}</div>}
+<div style={{fontSize:9,padding:"2px 6px",borderRadius:8,fontWeight:700,
+  background:se.tier>=3?"rgba(80,200,100,.1)":se.tier>=1?"rgba(255,180,60,.1)":"rgba(255,255,255,.05)",
+  color:se.tier>=3?"#5c5":se.tier>=1?"#da5":"#888",
+  border:`1px solid ${se.tier>=3?"rgba(80,200,100,.2)":se.tier>=1?"rgba(255,180,60,.2)":"rgba(255,255,255,.08)"}`
+}}>{["Free","Tablet","Scroll","Opus"][se.tier]||"?"}</div>
+<button onClick={()=>{sSt(false);sSo(true)}} style={{...Z.hB,background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",color:"#999",fontSize:20,padding:"8px 12px",position:"relative",minWidth:44,minHeight:44,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:8}}>⚙<span style={{width:8,height:8,borderRadius:"50%",background:se.apiToken?"#4c6":"#555",position:"absolute",top:4,right:4}}/></button></div></div>
+
+{/* BODY */}
+{page==="gen"&&<div style={{flex:1,display:"flex",overflow:"hidden"}}>
+
+{/* LEFT SIDEBAR - Characters */}
+<div className="sidebar" style={{width:pw.sidebar,minWidth:120,borderRight:"none",display:"flex",flexDirection:"column",flexShrink:0}}>
+<div style={{padding:"12px 12px 8px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+<span style={{fontSize:13,fontWeight:700,color:"#888"}}>캐릭터</span>
+<button onClick={oAC} style={{...Z.pB,fontSize:14,width:36,height:36,borderRadius:8}}>+</button></div>
+<div className="scroll-y" style={{flex:1,padding:"0 8px 8px"}}>
+{chars.map(ch=>(
+<div key={ch.id} className={`cc${activeIds.includes(ch.id)?" on":""}`} onClick={()=>toggleChar(ch.id)}>
+<div className="ct">{ch.thumbnail?<img src={ch.thumbnail}/>:<span>👤</span>}</div>
+<div style={{flex:1,minWidth:0}}>
+<div style={{fontSize:13,fontWeight:600,color:activeIds.includes(ch.id)?"#ffb080":"#bbb",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ch.name}</div>
+<div style={{fontSize:10,color:"#666"}}>{ch.chks.filter(c=>c.enabled).length}청크 · {ch.refs.length}바이브</div></div>
+<div style={{display:"flex",flexDirection:"column",gap:3}} onClick={e=>e.stopPropagation()}>
+<button onClick={()=>oEC(ch)} style={{...Z.tB,width:32,height:32,fontSize:12,borderRadius:6}}>✎</button>
+<button onClick={()=>dC(ch.id)} style={{...Z.tB,width:32,height:32,fontSize:12,color:"#f55",borderRadius:6}}>✕</button></div></div>))}
+{chars.length===0&&<div style={{fontSize:10,color:"#444",padding:10,textAlign:"center"}}>캐릭터를 추가하세요</div>}</div></div>
+
+<Rz panel="sidebar"/>
+
+{/* BASE IMAGE PANEL - appears in img2img/inpaint mode */}
+{mode!=="txt2img"&&baseImg&&(()=>{
+  const ratio=se.width/se.height;
+  return(
+<div style={{width:pw.base,minWidth:140,borderRight:"none",display:"flex",flexDirection:"column",flexShrink:0,background:"rgba(120,90,255,.03)"}}>
+<div style={{padding:"8px 10px",borderBottom:"1px solid rgba(120,90,255,.1)",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+<span style={{fontSize:11,fontWeight:700,color:"#b095ff"}}>🖼 Base Image</span>
+<div style={{display:"flex",gap:4}}>
+<button onClick={uploadBaseImg} style={{...Z.tB,width:22,height:22,fontSize:10,color:"#b095ff"}} title="다른 이미지 로드">📁</button>
+<button onClick={()=>{sMode("txt2img");sBaseImg(null);tw("txt2img 모드")}} style={{...Z.tB,width:22,height:22,fontSize:10,color:"#f55"}}>✕</button>
+</div>
+</div>
+{/* Base image preview */}
+<div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",padding:6,minHeight:0}}>
+<div style={{height:"100%",aspectRatio:String(ratio),maxWidth:"100%",position:"relative",flexShrink:0}}>
+<img src={baseImg} style={{width:"100%",height:"100%",objectFit:"contain",display:"block",borderRadius:4,opacity:.85}}/>
+<div style={{position:"absolute",top:4,left:4,fontSize:8,padding:"1px 6px",borderRadius:3,background:"rgba(120,90,255,.6)",color:"#fff",fontWeight:700}}>SOURCE</div>
+</div>
+</div>
+{/* Controls */}
+<div style={{padding:"8px 10px",borderTop:"1px solid rgba(120,90,255,.1)",flexShrink:0}}>
+<div style={{display:"flex",alignItems:"center",gap:4,marginBottom:4}}>
+<span style={{fontSize:10,color:"#888",minWidth:32}}>강도</span>
+<input type="range" min={0} max={1} step={0.05} value={i2iStrength} onChange={e=>sI2iStr(+e.target.value)} style={{flex:1}}/>
+<span style={{fontSize:10,color:"#b095ff",fontFamily:"monospace",minWidth:26,textAlign:"right"}}>{i2iStrength}</span>
+</div>
+<div style={{display:"flex",alignItems:"center",gap:4}}>
+<span style={{fontSize:10,color:"#888",minWidth:32}}>노이즈</span>
+<input type="range" min={0} max={1} step={0.05} value={i2iNoise} onChange={e=>sI2iNoise(+e.target.value)} style={{flex:1}}/>
+<span style={{fontSize:10,color:"#b095ff",fontFamily:"monospace",minWidth:26,textAlign:"right"}}>{i2iNoise}</span>
+</div>
+<div style={{marginTop:6,fontSize:9,color:"#666",lineHeight:1.4}}>
+{mode==="img2img"&&"이 이미지를 기반으로 재생성합니다"}
+{mode==="inpaint"&&"마스크 영역만 재생성합니다"}
+</div>
+</div>
+</div>);
+})()}
+
+{mode!=="txt2img"&&baseImg&&<Rz panel="base"/>}
+
+{/* MIDDLE - Preview + Actions + Generate */}
+{(()=>{
+  const ratio=se.width/se.height;
+  return(
+<div style={{width:pw.preview,minWidth:180,borderRight:"none",display:"flex",flexDirection:"column",flexShrink:0,flexGrow:0,background:"rgba(0,0,0,.15)"}}>
+
+{/* Preview area */}
+<div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",minHeight:0,padding:4}} onDrop={handleDrop} onDragOver={handleDragOver}>
+{genImg?<div style={{height:"100%",aspectRatio:String(ratio),maxWidth:"100%",position:"relative",flexShrink:0,cursor:"pointer"}} onClick={()=>sLB(true)}>
+<img src={genImg} style={{width:"100%",height:"100%",objectFit:"contain",display:"block",borderRadius:4}}/>
+{mode!=="txt2img"&&<div style={{position:"absolute",top:6,left:6,fontSize:9,padding:"2px 8px",borderRadius:4,fontWeight:700,backdropFilter:"blur(4px)",
+  background:mode==="img2img"?"rgba(120,90,255,.5)":"rgba(255,140,60,.5)",
+  color:"#fff"}}>{mode==="img2img"?"IMG2IMG":"INPAINT"}</div>}
+</div>
+:<div style={{width:"100%",height:"100%",display:"flex",alignItems:"center",justifyContent:"center",flexDirection:"column",gap:8}}>
+<div style={{aspectRatio:String(ratio),height:"35%",maxWidth:"80%",border:"2px dashed rgba(255,255,255,.08)",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"center",color:"#333",fontSize:11}}>{se.width}×{se.height}</div>
+<div style={{color:"#444",fontSize:11}}>미리보기</div>
+<button onClick={uploadBaseImg} style={{...Z.hB,fontSize:10,padding:"6px 14px",color:"#b095ff",borderColor:"rgba(120,90,255,.3)"}}>📁 이미지 업로드</button>
+<div style={{color:"#333",fontSize:9}}>또는 이미지를 여기에 드롭</div>
+</div>}
+</div>
+
+{/* Action bar - appears after generation */}
+{genImg&&<div style={{display:"flex",gap:4,padding:"6px 10px",borderTop:"1px solid rgba(255,255,255,.06)",background:"rgba(0,0,0,.2)",flexShrink:0,flexWrap:"wrap",justifyContent:"center"}}>
+<button onClick={downloadImg} style={{...Z.hB,fontSize:10,padding:"5px 10px"}}>💾 저장</button>
+<button onClick={()=>{sBaseImg(genImg);sMode("img2img");tw("Base Image 설정됨")}} style={{...Z.hB,fontSize:10,padding:"5px 10px",background:mode==="img2img"?"rgba(120,90,255,.25)":"transparent",borderColor:mode==="img2img"?"rgba(120,90,255,.4)":"rgba(255,255,255,.1)",color:mode==="img2img"?"#b095ff":"#888"}}>🖼 Base</button>
+<button onClick={uploadBaseImg} style={{...Z.hB,fontSize:10,padding:"5px 10px",color:"#b095ff"}}>📁 업로드</button>
+<button onClick={()=>{sEditSrc(genImg);sEditMode(true)}} style={{...Z.hB,fontSize:10,padding:"5px 10px",color:"#5cb8ff"}}>✏️ 편집</button>
+<button onClick={()=>{sBaseImg(genImg);sMode("inpaint");sIPE(true)}} style={{...Z.hB,fontSize:10,padding:"5px 10px",background:mode==="inpaint"?"rgba(255,140,60,.25)":"transparent",color:mode==="inpaint"?"#fa5":"#888"}}>🖌 인페인트</button>
+{mode!=="txt2img"&&<button onClick={()=>{sMode("txt2img");sBaseImg(null)}} style={{...Z.hB,fontSize:10,padding:"5px 10px",color:"#f55"}}>✕</button>}
+</div>}
+
+{/* Generate controls */}
+<div style={{padding:"10px 12px",borderTop:"1px solid rgba(120,90,255,.15)",background:"rgba(10,8,20,.6)",flexShrink:0}}>
+<button className="gen-btn" onClick={doGenerate} disabled={genLoading||!se.apiToken} style={{width:"100%",marginBottom:6}}>
+{genLoading?<span><span className="spinner" style={{width:12,height:12,borderWidth:1.5,marginRight:4,verticalAlign:"middle",display:"inline-block"}}/> 생성중...</span>
+:mode==="img2img"?"🖼 img2img 생성":mode==="inpaint"?"🖌 인페인트 생성":"🎨 이미지 생성"}
+</button>
+{genError&&<div style={{fontSize:10,color:"#f66",marginBottom:4}}>{genError.slice(0,100)}</div>}
+<div style={{display:"flex",gap:4,alignItems:"center",flexWrap:"wrap"}}>
+{(()=>{
+  const est=estimateAnlas(se,se.tier>=3,activeChars.flatMap(c=>c.refs||[]).length,mode==="img2img"?"img2img":"generate");
+  return <span style={{fontSize:10,padding:"3px 8px",borderRadius:5,fontWeight:600,
+    background:est.free?"rgba(80,200,100,.12)":"rgba(255,180,60,.12)",
+    color:est.free?"#5c5":"#da5"
+  }}>{est.free?"FREE":("~"+est.cost)}</span>;
+})()}
+<span style={{fontSize:9,color:"#555"}}>{se.width}×{se.height} · {se.steps}st</span>
+</div>
+{/* Vibe Transfer */}
+{activeChars.some(c=>c.refs.length>0)&&<div style={{marginTop:6,display:"flex",gap:4,flexWrap:"wrap",alignItems:"center"}}>
+<span style={{fontSize:9,fontWeight:700,color:"#c90"}}>VIBE</span>
+{activeChars.map(ch=>ch.refs.map(r=>(
+<div key={r.id} style={{position:"relative"}}>
+<img src={r.d} style={{width:28,height:28,borderRadius:4,objectFit:"cover",border:"1px solid rgba(255,140,60,.3)"}} title={ch.name+" s:"+r.s+" ie:"+r.ie}/>
+<button onClick={()=>rRI(ch.id,r.id)} style={{position:"absolute",top:-4,right:-4,background:"#f44",border:"none",borderRadius:"50%",width:14,height:14,color:"#fff",fontSize:8,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
+</div>)))}
+{activeChars.map(ch=><button key={"vb"+ch.id} onClick={()=>aRI(ch.id)} style={{...Z.pB,fontSize:8,width:28,height:28}} title={ch.name}>+</button>)}
+</div>}
+</div>
+</div>
+);})()}
+
+<Rz panel="preview"/>
+
+{/* RIGHT - Collapsible Column Groups */}
+<div className="scroll-y" style={{flex:1,padding:"10px 12px",overflow:"auto"}}>
+
+{/* Base columns group */}
+{(()=>{
+  const basePosTokens=baseChks.filter(c=>c.side==="pos"&&c.enabled).reduce((s,c)=>s+Math.ceil(c.text.length/4),0);
+  const baseNegTokens=baseChks.filter(c=>c.side==="neg"&&c.enabled).reduce((s,c)=>s+Math.ceil(c.text.length/4),0);
+  const allPosTokens=basePosTokens+activeChars.reduce((s,ch)=>s+ch.chks.filter(c=>c.side==="pos"&&c.enabled).reduce((s2,c)=>s2+Math.ceil(c.text.length/4),0),0);
+  const allNegTokens=baseNegTokens+activeChars.reduce((s,ch)=>s+ch.chks.filter(c=>c.side==="neg"&&c.enabled).reduce((s2,c)=>s2+Math.ceil(c.text.length/4),0),0);
+  const maxTokens=512;
+  const totalUsed=allPosTokens+allNegTokens;
+  const overLimit=totalUsed>maxTokens;
+  const isOpen=!(collapsed||{}).__base;
+  return(<div style={{marginBottom:10}}>
+    <div onClick={()=>up(p=>({...p,collapsed:{...(p.collapsed||{}),__base:!(p.collapsed||{}).__base}}))} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",background:"rgba(120,90,255,.06)",borderRadius:isOpen?"8px 8px 0 0":"8px",cursor:"pointer",border:"1px solid rgba(120,90,255,.12)"}}>
+      <span style={{fontSize:12,color:"#785aff",transition:"transform .2s",transform:isOpen?"rotate(90deg)":"rotate(0)"}}>▶</span>
+      <span style={{fontSize:13,fontWeight:700,color:"#c8b8ff",flex:1}}>베이스</span>
+      <span style={{fontSize:10,color:"#888",fontFamily:"'JetBrains Mono',monospace"}}>{basePosTokens}+{baseNegTokens}t</span>
+      <span style={{fontSize:10,padding:"2px 6px",borderRadius:4,fontWeight:600,fontFamily:"'JetBrains Mono',monospace",background:overLimit?"rgba(255,60,60,.15)":"rgba(120,90,255,.1)",color:overLimit?"#f55":"#9988dd"}}>{totalUsed}/{maxTokens}</span>
+      <button onClick={e=>{e.stopPropagation();aC("b")}} style={{...Z.pB,width:24,height:24,fontSize:12}}>+</button>
+    </div>
+    {isOpen&&<div style={{border:"1px solid rgba(120,90,255,.08)",borderTop:"none",borderRadius:"0 0 8px 8px",padding:8}}>
+      <div className="scroll-x" style={{display:"flex",gap:8,alignItems:"flex-start"}}>
+        {baseCols.map((col,i)=><CP key={col.id} col={col} ci={i} tt={baseCols.length} chks={baseChks} lb="b"
+          oMC={(id,d)=>mC("b",id,d)} oRC={c=>rC("b",c)} oDC={id=>dCC("b",id)}
+          oAK={(cid,s)=>aK("b",cid,s)} oEK={c=>eK("b",c)} oDK={id=>dK("b",id)} oTK={id=>tK("b",id)} oMK={(id,d)=>mK("b",id,d)}/>)}
+      </div>
+    </div>}
+  </div>);
+})()}
+
+{/* Character column groups */}
+{activeChars.map(ch=>{
+  const chPosTokens=ch.chks.filter(c=>c.side==="pos"&&c.enabled).reduce((s,c)=>s+Math.ceil(c.text.length/4),0);
+  const chNegTokens=ch.chks.filter(c=>c.side==="neg"&&c.enabled).reduce((s,c)=>s+Math.ceil(c.text.length/4),0);
+  const isOpen=!(collapsed||{})[ch.id];
+  return(<div key={ch.id} style={{marginBottom:10}}>
+    <div onClick={()=>up(p=>({...p,collapsed:{...(p.collapsed||{}),[ch.id]:!(p.collapsed||{})[ch.id]}}))} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",background:"rgba(255,140,60,.06)",borderRadius:isOpen?"8px 8px 0 0":"8px",cursor:"pointer",border:"1px solid rgba(255,140,60,.12)"}}>
+      <span style={{fontSize:12,color:"#c90",transition:"transform .2s",transform:isOpen?"rotate(90deg)":"rotate(0)"}}>▶</span>
+      <div className="ct" style={{width:24,height:24,borderRadius:4,fontSize:11}}>{ch.thumbnail?<img src={ch.thumbnail}/>:<span>👤</span>}</div>
+      <span style={{fontSize:13,fontWeight:700,color:"#ffb080",flex:1}}>{ch.name}</span>
+      <span style={{fontSize:10,color:"#888",fontFamily:"'JetBrains Mono',monospace"}}>{chPosTokens}+{chNegTokens}t</span>
+      <button onClick={e=>{e.stopPropagation();aC(ch.id)}} style={{...Z.pB,width:24,height:24,fontSize:12}}>+</button>
+    </div>
+    {isOpen&&<div style={{border:"1px solid rgba(255,140,60,.08)",borderTop:"none",borderRadius:"0 0 8px 8px",padding:8}}>
+      <div className="scroll-x" style={{display:"flex",gap:8,alignItems:"flex-start"}}>
+        {ch.cols.map((col,i)=><CP key={col.id} col={col} ci={i} tt={ch.cols.length} chks={ch.chks} lb="c"
+          oMC={(id,d)=>mC(ch.id,id,d)} oRC={c=>rC(ch.id,c)} oDC={id=>dCC(ch.id,id)}
+          oAK={(cid,s)=>aK(ch.id,cid,s)} oEK={c=>eK(ch.id,c)} oDK={id=>dK(ch.id,id)} oTK={id=>tK(ch.id,id)} oMK={(id,d)=>mK(ch.id,id,d)}/>)}
+      </div>
+    </div>}
+  </div>);
+})}
+
+{activeChars.length===0&&<div style={{color:"#444",fontSize:12,padding:20,textAlign:"center"}}>← 캐릭터를 선택하면 프롬프트 열이 여기에 표시됩니다</div>}
+
+</div></div>}
+
+{/* POST-PROCESSING PAGE */}
+{page==="post"&&<div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+{/* Post toolbar */}
+<div style={{padding:"10px 16px",borderBottom:"1px solid rgba(120,90,255,.1)",display:"flex",gap:8,alignItems:"center",flexShrink:0,flexWrap:"wrap"}}>
+<span style={{fontSize:13,fontWeight:700,color:"#b095ff"}}>📋 생성 히스토리</span>
+<span style={{fontSize:10,color:"#555"}}>{history.length}건</span>
+<div style={{flex:1}}/>
+{history.length>0&&<button onClick={()=>{if(confirm("전체 히스토리를 삭제하시겠습니까?"))sHistory([])}} style={{...Z.hB,fontSize:10,padding:"4px 10px",color:"#f55"}}>🗑 전체 삭제</button>}
+</div>
+{/* History grid */}
+<div className="scroll-y" style={{flex:1,padding:12,overflow:"auto"}}>
+{history.length===0&&<div style={{textAlign:"center",color:"#444",padding:40,fontSize:13}}>생성 기록이 없습니다</div>}
+<div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(160px, 1fr))",gap:10}}>
+{history.map(h=>(
+<div key={h.id} style={{background:"rgba(255,255,255,.03)",border:"1px solid rgba(255,255,255,.06)",borderRadius:8,overflow:"hidden",display:"flex",flexDirection:"column"}}>
+{/* Thumbnail */}
+<div style={{aspectRatio:String(se.width/se.height),background:"#111",display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}>
+{h.thumb?<img src={h.thumb} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+:<div style={{color:"#333",fontSize:10}}>미리보기 없음</div>}
+</div>
+{/* Info */}
+<div style={{padding:"6px 8px",flex:1}}>
+<div style={{fontSize:9,color:"#888",marginBottom:2}}>{new Date(h.date).toLocaleString("ko-KR",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"})}</div>
+<div style={{fontSize:10,color:"#aaa",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginBottom:2}} title={h.prompt}>{h.prompt||"(프롬프트 없음)"}</div>
+<div style={{fontSize:9,color:"#555"}}>{h.w}×{h.h} · {h.steps}st{h.char?" · "+h.char:""}</div>
+</div>
+{/* Actions */}
+<div style={{display:"flex",borderTop:"1px solid rgba(255,255,255,.04)",flexShrink:0}}>
+{h.imgUrl&&<button onClick={async()=>{
+  sGenImg(h.imgUrl);sPage("gen");tw("이미지 불러옴");
+}} style={{flex:1,background:"none",border:"none",borderRight:"1px solid rgba(255,255,255,.04)",color:"#b095ff",fontSize:10,padding:"6px",cursor:"pointer",fontFamily:"inherit"}}>불러오기</button>}
+{h.imgUrl&&<button onClick={()=>{
+  sEditSrc(h.imgUrl);sEditMode(true);tw("편집 모드");
+}} style={{flex:1,background:"none",border:"none",borderRight:"1px solid rgba(255,255,255,.04)",color:"#5cb8ff",fontSize:10,padding:"6px",cursor:"pointer",fontFamily:"inherit"}}>편집</button>}
+<button onClick={()=>{sHistory(p=>p.filter(x=>x.id!==h.id))}} style={{flex:0,background:"none",border:"none",color:"#f55",fontSize:10,padding:"6px 10px",cursor:"pointer",fontFamily:"inherit"}}>✕</button>
+</div>
+</div>
+))}
+</div>
+</div>
+</div>}
+
+{/* LIGHTBOX */}
+{lightbox&&genImg&&<div onClick={()=>sLB(false)} style={{position:"fixed",inset:0,zIndex:9998,background:"rgba(0,0,0,.85)",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",backdropFilter:"blur(6px)"}}>
+<img src={genImg} style={{maxWidth:"92vw",maxHeight:"92vh",objectFit:"contain",borderRadius:8,boxShadow:"0 8px 40px rgba(0,0,0,.6)"}}/>
+<div style={{position:"absolute",top:16,right:16,color:"#888",fontSize:14}}>클릭하여 닫기</div>
+<div style={{position:"absolute",bottom:16,display:"flex",gap:8}} onClick={e=>e.stopPropagation()}>
+<button onClick={downloadImg} style={{...Z.hB,fontSize:12,padding:"8px 16px",background:"rgba(120,90,255,.4)",backdropFilter:"blur(4px)"}}>💾 저장</button>
+<button onClick={()=>{sLB(false);sBaseImg(genImg);sMode("img2img");tw("Base Image 설정됨")}} style={{...Z.hB,fontSize:12,padding:"8px 16px",background:"rgba(120,90,255,.4)",backdropFilter:"blur(4px)"}}>🖼 Base로 사용</button>
+<button onClick={()=>{sLB(false);sEditSrc(genImg);sEditMode(true)}} style={{...Z.hB,fontSize:12,padding:"8px 16px",background:"rgba(90,180,255,.4)",backdropFilter:"blur(4px)"}}>✏️ 편집</button>
+<button onClick={()=>{sLB(false);sMode("inpaint");sIPE(true)}} style={{...Z.hB,fontSize:12,padding:"8px 16px",background:"rgba(255,140,60,.4)",backdropFilter:"blur(4px)"}}>🖌 인페인트</button>
+</div>
+</div>}
+
+{/* EDIT CANVAS */}
+{editMode&&editImg&&<div style={{position:"fixed",inset:0,zIndex:9999,background:"#0a0814",display:"flex",flexDirection:"column"}}>
+{/* Toolbar */}
+<div style={{display:"flex",alignItems:"center",gap:6,padding:"6px 12px",background:"rgba(20,16,40,.95)",borderBottom:"1px solid rgba(90,180,255,.15)",flexShrink:0,flexWrap:"wrap"}}>
+<span style={{fontSize:12,fontWeight:700,color:"#5cb8ff"}}>✏️ 편집</span>
+{/* Tool buttons */}
+{[["brush","🖌"],["eraser","🧹"],["eyedropper","💧"],["blur","🌫"],["bgremove","🔲"]].map(([t,icon])=>
+<button key={t} onClick={()=>sEditTool(t)} style={{...Z.hB,fontSize:11,padding:"3px 8px",minWidth:36,
+  background:editTool===t?"rgba(90,180,255,.25)":"transparent",
+  borderColor:editTool===t?"rgba(90,180,255,.4)":"rgba(255,255,255,.1)",
+  color:editTool===t?"#5cb8ff":"#888"}} title={t==="bgremove"?"영역 선택 → 배경 제거":t}>{icon}</button>)}
+<div style={{width:1,height:20,background:"rgba(255,255,255,.08)"}}/>
+{/* Color */}
+<div onClick={()=>sShowCW(true)} style={{width:24,height:24,borderRadius:4,background:editColor,cursor:"pointer",border:"2px solid rgba(255,255,255,.3)",flexShrink:0}} title="색상환 열기"/>
+{["#ff0000","#ff8800","#ffee00","#00cc44","#0088ff","#aa44ff","#ffffff","#000000","#c97850","#ffccaa"].map(c=>
+<div key={c} onClick={()=>{sEditColor(c);sEditTool("brush")}} style={{width:16,height:16,borderRadius:2,background:c,cursor:"pointer",border:editColor===c?"2px solid #fff":"1px solid rgba(255,255,255,.15)",flexShrink:0}}/>)}
+<div style={{width:1,height:20,background:"rgba(255,255,255,.08)"}}/>
+{/* Brush size */}
+<span style={{fontSize:9,color:"#888"}}>크기</span>
+<input type="range" min={1} max={100} value={editBrush} onChange={e=>sEditBrush(+e.target.value)} style={{width:60}}/>
+<span style={{fontSize:9,color:"#aaa",fontFamily:"monospace",minWidth:18}}>{editBrush}</span>
+{/* Opacity */}
+<span style={{fontSize:9,color:"#888"}}>투명</span>
+<input type="range" min={0.1} max={1} step={0.1} value={editOpacity} onChange={e=>sEditOpacity(+e.target.value)} style={{width:40}}/>
+<span style={{fontSize:9,color:"#aaa",fontFamily:"monospace",minWidth:16}}>{editOpacity}</span>
+{/* Blur strength (only when blur tool) */}
+{editTool==="blur"&&<React.Fragment>
+<span style={{fontSize:9,color:"#888"}}>블러</span>
+<input type="range" min={2} max={10} value={editBlurStr} onChange={e=>sEditBlurStr(+e.target.value)} style={{width:40}}/>
+<span style={{fontSize:9,color:"#aaa",fontFamily:"monospace",minWidth:12}}>{editBlurStr}</span>
+</React.Fragment>}
+<div style={{width:1,height:20,background:"rgba(255,255,255,.08)"}}/>
+<button onClick={editUndo} style={{...Z.hB,fontSize:10,padding:"3px 8px"}} title="Ctrl+Z / 두 손가락 탭">↩</button>
+<button onClick={editClear} style={{...Z.hB,fontSize:10,padding:"3px 8px",color:"#f66"}}>✕ 초기화</button>
+<span style={{fontSize:9,color:"#555"}}>{Math.round(editZoom*100)}%</span>
+<button onClick={()=>{sEditZoom(1);sEditPan({x:0,y:0})}} style={{...Z.hB,fontSize:9,padding:"2px 6px"}}>1:1</button>
+{editTool==="bgremove"&&!bgRemoving&&<span style={{fontSize:9,color:"#8d8",padding:"2px 6px",background:"rgba(100,200,100,.1)",borderRadius:4}}>영역 칠하기(선택) 또는 바로 실행 →</span>}
+{editTool==="bgremove"&&!bgRemoving&&<button onClick={()=>editBgRemove("local")} style={{...Z.hB,fontSize:10,padding:"4px 10px",color:"#8d8",borderColor:"rgba(100,200,100,.3)",background:"rgba(100,200,100,.1)"}}>🔲 로컬 (무료)</button>}
+{editTool==="bgremove"&&!bgRemoving&&se.apiToken&&<button onClick={()=>{if(!confirm("NAI API를 사용합니다.\nAnlas가 소모됩니다. 계속?"))return;editBgRemove("nai")}} style={{...Z.hB,fontSize:10,padding:"4px 10px",color:"#da5",borderColor:"rgba(255,180,60,.3)",background:"rgba(255,180,60,.1)"}}>🔲 NAI (Anlas)</button>}
+{bgRemoving&&<span style={{fontSize:10,color:"#5cb8ff",padding:"2px 8px",background:"rgba(90,180,255,.1)",borderRadius:4,display:"flex",alignItems:"center",gap:4}}><span className="spinner" style={{width:10,height:10,borderWidth:1.5,display:"inline-block"}}/> {bgProgress}</span>}
+<div style={{flex:1}}/>
+<button onClick={editApply} className="gen-btn" style={{fontSize:11,padding:"5px 14px",minHeight:32,background:"linear-gradient(135deg,#3388ff,#5cb8ff)"}}>✅ 적용 → Base</button>
+<button onClick={()=>{sEditMode(false);sEditSrc(null)}} style={{...Z.hB,fontSize:13,padding:"3px 8px",color:"#f66"}}>✕</button>
+</div>
+{/* Main area: canvas + layers panel */}
+<div style={{flex:1,display:"flex",overflow:"hidden",minHeight:0}}>
+{/* Color Wheel */}
+{showCW&&<React.Fragment><div style={{position:"fixed",inset:0,zIndex:10000}} onClick={()=>sShowCW(false)}/><ColorWheel color={editColor} onChange={c=>sEditColor(c)} onClose={()=>sShowCW(false)}/></React.Fragment>}
+{/* Canvas area with zoom/pan */}
+<div style={{flex:1,overflow:"hidden",position:"relative",display:"flex",alignItems:"center",justifyContent:"center"}} onWheel={editWheel}>
+<div ref={editWrapRef} style={{position:"relative",transform:`scale(${editZoom}) translate(${editPan.x/editZoom}px,${editPan.y/editZoom}px)`,transformOrigin:"center center",transition:editPinch.current?"none":"transform 0.1s",aspectRatio:String(se.width/se.height),maxWidth:"90%",maxHeight:"90%"}}>
+<img ref={editImgRef} src={editImg} style={{width:"100%",height:"100%",objectFit:"contain",display:"block",userSelect:"none",WebkitUserSelect:"none"}} draggable={false}/>
+<canvas ref={editCanvasRef} style={{position:"absolute",inset:0,width:"100%",height:"100%",
+  cursor:editTool==="eyedropper"?"crosshair":editTool==="blur"?"cell":editTool==="bgremove"?"crosshair":"default",touchAction:"none"}}
+  onMouseDown={editStartDraw} onMouseMove={editDoDraw} onMouseUp={editStopDraw} onMouseLeave={editStopDraw}
+  onContextMenu={e=>e.preventDefault()}
+  onTouchStart={editTouchStart} onTouchMove={editTouchMove} onTouchEnd={editTouchEnd}/>
+{/* Brush resize preview circle */}
+{brushPreview&&<div style={{position:"absolute",left:brushPreview.x-brushPreview.size/2*editZoom,top:brushPreview.y-brushPreview.size/2*editZoom,width:brushPreview.size*editZoom,height:brushPreview.size*editZoom,borderRadius:"50%",border:"2px solid rgba(255,255,255,.7)",pointerEvents:"none",boxShadow:"0 0 0 1px rgba(0,0,0,.4)"}}/>}
+</div>
+</div>
+{/* Layers panel */}
+<div style={{width:140,borderLeft:"1px solid rgba(90,180,255,.1)",background:"rgba(10,8,20,.6)",display:"flex",flexDirection:"column",flexShrink:0}}>
+<div style={{padding:"6px 8px",borderBottom:"1px solid rgba(90,180,255,.08)",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+<span style={{fontSize:10,fontWeight:700,color:"#5cb8ff"}}>레이어</span>
+<button onClick={()=>addEditLayer()} style={{...Z.pB,width:20,height:20,fontSize:10}}>+</button>
+</div>
+<div className="scroll-y" style={{flex:1,padding:4}}>
+{[...editLayers].reverse().map(l=>(
+<div key={l.id} style={{display:"flex",alignItems:"center",gap:4,padding:"4px 6px",marginBottom:2,borderRadius:4,cursor:"pointer",
+  background:l.id===editActiveLayer?"rgba(90,180,255,.15)":"transparent",
+  border:l.id===editActiveLayer?"1px solid rgba(90,180,255,.3)":"1px solid transparent"}}
+  onClick={()=>sEditActiveLayer(l.id)}>
+<div onClick={e=>{e.stopPropagation();sEditLayers(p=>p.map(x=>x.id===l.id?{...x,visible:!x.visible}:x))}} style={{fontSize:10,cursor:"pointer",opacity:l.visible?1:.3}}>{l.visible?"👁":"👁"}</div>
+<span style={{fontSize:10,color:l.id===editActiveLayer?"#5cb8ff":"#888",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{l.name}</span>
+{editLayers.length>1&&<button onClick={e=>{e.stopPropagation();const lid=l.id;delete editLayerCanvases.current[lid];sEditLayers(p=>p.filter(x=>x.id!==lid));if(editActiveLayer===lid)sEditActiveLayer(editLayers.find(x=>x.id!==lid)?.id)}} style={{background:"none",border:"none",color:"#f55",fontSize:9,cursor:"pointer",padding:0}}>✕</button>}
+</div>))}
+</div>
+</div>
+</div>
+</div>}
+
+{/* INPAINT EDITOR */}
+{ipEdit&&genImg&&<div style={{position:"fixed",inset:0,zIndex:9999,background:"#0a0814",display:"flex",flexDirection:"column"}}>
+{/* Toolbar */}
+<div style={{display:"flex",alignItems:"center",gap:10,padding:"8px 14px",background:"rgba(20,16,40,.95)",borderBottom:"1px solid rgba(120,90,255,.15)",flexShrink:0,flexWrap:"wrap"}}>
+<span style={{fontSize:13,fontWeight:700,color:"#c8b8ff"}}>🖌 인페인트</span>
+<div style={{display:"flex",alignItems:"center",gap:4}}>
+<span style={{fontSize:10,color:"#888"}}>브러시</span>
+<input type="range" min={5} max={150} value={ipBrush} onChange={e=>sIPB(+e.target.value)} style={{width:80}}/>
+<span style={{fontSize:10,color:"#aaa",fontFamily:"monospace",minWidth:24}}>{ipBrush}</span>
+</div>
+<button onClick={()=>sIPEr(p=>!p)} style={{...Z.hB,fontSize:11,padding:"4px 12px",background:ipErase?"rgba(255,60,60,.2)":"rgba(60,120,255,.2)",color:ipErase?"#f66":"#68f",borderColor:ipErase?"rgba(255,60,60,.3)":"rgba(60,120,255,.3)"}}>{ipErase?"🧹 지우개":"🖌 마스크"}</button>
+<button onClick={ipUndo} style={{...Z.hB,fontSize:11,padding:"4px 10px"}}>↩ 되돌리기</button>
+<button onClick={ipClear} style={{...Z.hB,fontSize:11,padding:"4px 10px",color:"#f66"}}>✕ 초기화</button>
+<div style={{flex:1}}/>
+<div style={{display:"flex",alignItems:"center",gap:4}}>
+<span style={{fontSize:10,color:"#888"}}>강도</span>
+<input type="range" min={0} max={1} step={0.05} value={ipStrength} onChange={e=>sIPS(+e.target.value)} style={{width:70}}/>
+<span style={{fontSize:10,color:"#aaa",fontFamily:"monospace",minWidth:24}}>{ipStrength}</span>
+</div>
+<button onClick={execInpaint} disabled={genLoading} className="gen-btn" style={{fontSize:12,padding:"6px 16px",minHeight:36}}>
+{genLoading?"생성중...":"🎨 인페인트 생성"}</button>
+<button onClick={()=>sIPE(false)} style={{...Z.hB,fontSize:14,padding:"4px 10px",color:"#f66"}}>✕</button>
+</div>
+{/* Canvas area */}
+<div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",padding:10,minHeight:0}}>
+<div style={{position:"relative",maxWidth:"100%",maxHeight:"100%",aspectRatio:String(se.width/se.height)}}>
+<img ref={ipImgRef} src={genImg} style={{width:"100%",height:"100%",objectFit:"contain",display:"block",borderRadius:4,userSelect:"none",WebkitUserSelect:"none"}} draggable={false}/>
+<canvas ref={ipCanvasRef} style={{position:"absolute",inset:0,width:"100%",height:"100%",cursor:"crosshair",touchAction:"none",borderRadius:4}}
+  onMouseDown={ipStartDraw} onMouseMove={ipDraw} onMouseUp={ipStopDraw} onMouseLeave={ipStopDraw}
+  onTouchStart={ipStartDraw} onTouchMove={ipDraw} onTouchEnd={ipStopDraw}/>
+</div>
+</div>
+</div>}
+
+{/* CHUNK MODAL */}
+<Mod open={!!mo} onClose={()=>sMo(null)} title={mTi} w={isTx?"min(700px,94vw)":undefined}>
+<div style={{display:"flex",flexDirection:"column",gap:10}}>
+<div><label style={Z.lb}>{isTx?"라벨":"이름"}</label>
+<input ref={lR} key={mo?.t+(mo?.d?.id||"")} defaultValue={dLb} placeholder={isTx?"예: 애니메이션풍":"예: 의상"} style={Z.ip} autoFocus/></div>
+{isTx&&<div><label style={Z.lb}>프롬프트</label>
+<textarea ref={tR} key={"t"+(mo?.d?.id||"")} defaultValue={dTx} placeholder="masterpiece, best quality, ..." rows={8} style={{...Z.ip,resize:"both",fontFamily:"'JetBrains Mono',monospace",fontSize:12,minHeight:120,lineHeight:1.5}}/></div>}
+<button onClick={hSv} style={Z.sv}>저장</button></div></Mod>
+
+{/* CHAR MODAL */}
+<Mod open={!!cm} onClose={()=>sCm(null)} title={cm?.t==="a"?"캐릭터 추가":"캐릭터 수정"}>
+<div style={{display:"flex",flexDirection:"column",gap:12}}>
+<div style={{display:"flex",gap:10}}>
+<div><div onClick={()=>fR.current?.click()} style={{width:64,height:64,borderRadius:5,background:"#1a1a2e",border:"1px dashed rgba(255,255,255,.15)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}>
+{tp?<img src={tp} style={{width:"100%",height:"100%",objectFit:"cover"}}/>:<span style={{color:"#555",fontSize:10}}>썸네일</span>}</div>
+<input ref={fR} type="file" accept="image/*" style={{display:"none"}} onChange={hTU}/></div>
+<div style={{flex:1}}><label style={Z.lb}>이름</label>
+<input ref={cR} key={cm?.c?.id||"n"} defaultValue={cm?.c?.name||""} placeholder="예: 아리아" style={Z.ip} autoFocus/>
+<label style={{...Z.lb,marginTop:6}}>메모</label>
+<textarea ref={nR} key={"n"+(cm?.c?.id||"")} defaultValue={cm?.c?.notes||""} placeholder="특징, 설정 등" rows={2} style={{...Z.ip,resize:"vertical",fontSize:11}}/></div></div>
+<button onClick={svC} style={Z.sv}>{cm?.t==="a"?"추가":"저장"}</button></div></Mod>
+
+{/* SETTINGS MODAL */}
+<Mod open={so} onClose={()=>sSo(false)} title="⚙ 설정" w="min(560px,92vw)">
+<div style={{display:"flex",flexDirection:"column",gap:12}}>
+<div><label style={Z.lb}>NAI API Token</label>
+<div style={{display:"flex",gap:5}}>
+<input type={st?"text":"password"} value={se.apiToken} onChange={e=>up(p=>({...p,settings:{...p.settings,apiToken:e.target.value.trim()}}))} placeholder="pst-..." style={{...Z.ip,flex:1,fontFamily:"'JetBrains Mono',monospace",fontSize:13}}/>
+<button onClick={()=>sSt(p=>!p)} style={{...Z.tB,width:44,height:44,fontSize:16,borderRadius:8}}>{st?"🙈":"👁"}</button></div>
+<div style={{fontSize:10,color:"#666",marginTop:3}}>
+  User Settings → Account → Get Persistent API Token (pst-로 시작)
+  {se.apiToken&&!se.apiToken.startsWith("pst-")&&<span style={{color:"#f88"}}> · ⚠ 토큰이 pst-로 시작하지 않습니다</span>}
+  {se.apiToken&&se.apiToken.length<20&&<span style={{color:"#f88"}}> · ⚠ 토큰이 너무 짧습니다</span>}
+</div>
+{se.apiToken&&<div style={{display:"flex",gap:6,marginTop:4,alignItems:"center"}}>
+<div style={{fontSize:10,color:"#5a5"}}>✓ 저장됨 ({se.apiToken.slice(0,8)}...)</div>
+<button onClick={async()=>{
+  try{
+    const r=await fetch("https://api.novelai.net/user/subscription",{headers:{"Authorization":"Bearer "+se.apiToken.trim()}});
+    if(r.ok){const d=await r.json();sAnlas(d);tw("✓ 토큰 유효! ("+r.status+")")}
+    else tw("⚠ "+r.status+" "+r.statusText)
+  }catch(e){tw("⚠ 연결 실패 (CORS?)")}
+}} style={{...Z.hB,fontSize:10,padding:"3px 10px"}}>🔑 토큰 테스트</button>
+</div>}</div>
+{/* Account info - manual */}
+<div style={{display:"flex",gap:8,flexWrap:"wrap",alignItems:"flex-end"}}>
+<div style={{flex:1,minWidth:120}}>
+<label style={Z.lb}>구독 티어</label>
+<select value={se.tier} onChange={e=>up(p=>({...p,settings:{...p.settings,tier:parseInt(e.target.value)}}))} style={Z.sl}>
+<option value={0}>Free (무료체험)</option>
+<option value={1}>Tablet ($10/월, 1000 Anlas)</option>
+<option value={2}>Scroll ($15/월, 1000 Anlas)</option>
+<option value={3}>Opus ($25/월, 10000 Anlas)</option>
+</select>
+</div>
+<div style={{flex:1,minWidth:100}}>
+<label style={Z.lb}>현재 Anlas 잔액</label>
+<input type="number" min={0} value={se.anlasBalance} onChange={e=>up(p=>({...p,settings:{...p.settings,anlasBalance:parseInt(e.target.value)||0}}))} style={{...Z.ip,fontFamily:"'JetBrains Mono',monospace",fontSize:11}}/>
+</div>
+</div>
+<div style={{fontSize:9,color:"#666",marginTop:-6}}>
+{se.tier>=3?"Opus: 1MP 이하 + 28 Steps 이하 = 무료 생성":"NovelAI 사이트에서 잔액을 확인하고 수동 입력하세요"}
+{se.apiToken&&" · CORS로 API 조회가 안 될 경우 수동으로 관리"}
+</div>
+{/* API auto-fetch (if available) */}
+{se.apiToken&&anlas!==null&&typeof anlas.anlas==="number"&&<div style={{display:"flex",alignItems:"center",gap:8}}>
+<div style={{fontSize:9,color:"#5a5"}}>✓ API 조회: {anlas.anlas.toLocaleString()} Anlas</div>
+<button onClick={()=>{up(p=>({...p,settings:{...p.settings,anlasBalance:anlas.anlas}}));tw("잔액 동기화!")}} style={{...Z.hB,fontSize:9,padding:"2px 8px"}}>↙ 동기화</button>
+<button onClick={()=>fetchAnlas(se.apiToken).then(r=>{sAnlas(r);tw("갱신!")})} style={{...Z.hB,fontSize:9,padding:"2px 8px"}}>↻ 갱신</button>
+</div>}
+<div style={{fontSize:9,color:"#666"}}>생성 기록: {history.length}건</div>
+<div style={{height:1,background:"rgba(255,255,255,.06)"}}/>
+<div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+<div style={{flex:1,minWidth:140}}><label style={Z.lb}>모델</label><select value={se.model} onChange={e=>up(p=>({...p,settings:{...p.settings,model:e.target.value}}))} style={Z.sl}>{MO.map(m=><option key={m.v} value={m.v}>{m.l}</option>)}</select>
+<div style={{fontSize:9,color:"#666",marginTop:2}}>API값: {se.model}</div></div>
+<div style={{flex:1,minWidth:140}}><label style={Z.lb}>해상도</label><select value={`${se.width}x${se.height}`} onChange={e=>{const[w,h]=e.target.value.split("x").map(Number);up(p=>({...p,settings:{...p.settings,width:w,height:h}}))}} style={Z.sl}>{RE.map(r=><option key={`${r.w}x${r.h}`} value={`${r.w}x${r.h}`}>{r.l}</option>)}</select></div></div>
+<div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+<div style={{flex:1,minWidth:100}}><label style={Z.lb}>샘플러</label><select value={se.sampler} onChange={e=>up(p=>({...p,settings:{...p.settings,sampler:e.target.value}}))} style={Z.sl}>{SA.map(s=><option key={s.v} value={s.v}>{s.l}</option>)}</select></div>
+<div style={{flex:1,minWidth:60}}><label style={Z.lb}>Steps</label><input type="number" min={1} max={50} value={se.steps} onChange={e=>up(p=>({...p,settings:{...p.settings,steps:parseInt(e.target.value)||28}}))} style={Z.ip}/></div>
+<div style={{flex:1,minWidth:60}}><label style={Z.lb}>Guidance</label><input type="number" min={0} max={30} step={.5} value={se.scale} onChange={e=>up(p=>({...p,settings:{...p.settings,scale:parseFloat(e.target.value)||5}}))} style={Z.ip}/></div></div>
+<div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+<div style={{flex:1}}><label style={Z.lb}>Seed</label><input value={se.seed} onChange={e=>up(p=>({...p,settings:{...p.settings,seed:e.target.value}}))} placeholder="랜덤" style={{...Z.ip,fontFamily:"'JetBrains Mono',monospace",fontSize:11}}/></div>
+<div style={{flex:1}}><label style={Z.lb}>포맷</label><select value={se.format} onChange={e=>up(p=>({...p,settings:{...p.settings,format:e.target.value}}))} style={Z.sl}><option value="png">PNG</option><option value="webp">WebP</option></select></div></div>
+<div style={{display:"flex",gap:14}}>
+<label style={{display:"flex",alignItems:"center",gap:5,cursor:"pointer",fontSize:11,color:"#aaa"}}><input type="checkbox" checked={se.smea} onChange={e=>up(p=>({...p,settings:{...p.settings,smea:e.target.checked}}))} style={{accentColor:"#785aff"}}/> SMEA</label>
+<label style={{display:"flex",alignItems:"center",gap:5,cursor:"pointer",fontSize:11,color:"#aaa"}}><input type="checkbox" checked={se.smeaDyn} onChange={e=>up(p=>({...p,settings:{...p.settings,smeaDyn:e.target.checked}}))} style={{accentColor:"#785aff"}}/> SMEA+DYN</label></div>
+<div style={{height:1,background:"rgba(255,255,255,.06)"}}/>
+<div><label style={Z.lb}>기본 파일명</label><input value={se.defaultFilename} onChange={e=>up(p=>({...p,settings:{...p.settings,defaultFilename:e.target.value}}))} style={{...Z.ip,fontFamily:"'JetBrains Mono',monospace",fontSize:11}}/>
+<div style={{fontSize:9,color:"#555",marginTop:2}}>{FS?"✓ 경로 기억됨":"⚠ File API 미지원"}</div></div>
+<div><label style={{...Z.lb,marginBottom:5}}>데이터</label>
+<div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
+<button onClick={hEx} style={{...Z.hB,fontSize:9,padding:"3px 8px"}}>📥 내보내기</button>
+<button onClick={hIm} style={{...Z.hB,fontSize:9,padding:"3px 8px"}}>📤 가져오기</button>
+<button onClick={()=>{if(confirm("초기화?")){sD(DD());tw("초기화")}}} style={{...Z.hB,fontSize:9,padding:"3px 8px",background:"rgba(255,50,50,.1)",borderColor:"rgba(255,50,50,.3)",color:"#f88"}}>🗑 초기화</button></div></div>
+</div></Mod>
+</div>)}
+
+const Z={
+ov:{position:"fixed",inset:0,zIndex:999,background:"rgba(0,0,0,.6)",display:"flex",alignItems:"center",justifyContent:"center",backdropFilter:"blur(3px)"},
+mb:{background:"#16162a",border:"1px solid #2a2a4a",borderRadius:12,padding:"24px 28px",maxHeight:"85vh",maxHeight:"85dvh",overflowY:"auto",WebkitOverflowScrolling:"touch"},
+hB:{background:"rgba(120,90,255,.15)",border:"1px solid rgba(120,90,255,.3)",borderRadius:6,padding:"6px 14px",color:"#b095ff",fontSize:12,fontWeight:600,cursor:"pointer",minHeight:36},
+aV:{background:"none",border:"none",color:"#666",fontSize:10,cursor:"pointer",padding:"4px 3px",lineHeight:1,minWidth:28,minHeight:24,display:"inline-flex",alignItems:"center",justifyContent:"center"},
+aH:{background:"none",border:"none",color:"#888",fontSize:12,cursor:"pointer",padding:"4px 6px",minWidth:32,minHeight:32,display:"inline-flex",alignItems:"center",justifyContent:"center"},
+tB:{background:"rgba(255,255,255,.05)",border:"1px solid rgba(255,255,255,.08)",borderRadius:5,width:28,height:28,display:"inline-flex",alignItems:"center",justifyContent:"center",color:"#888",fontSize:12,cursor:"pointer",flexShrink:0},
+pB:{background:"rgba(120,90,255,.12)",border:"1px solid rgba(120,90,255,.25)",borderRadius:5,width:28,height:28,display:"flex",alignItems:"center",justifyContent:"center",color:"#b095ff",fontSize:16,cursor:"pointer",fontWeight:700},
+eH:{fontSize:11,color:"#444",padding:"8px 4px",textAlign:"center"},
+lb:{fontSize:12,fontWeight:500,color:"#888",marginBottom:4,display:"block"},
+ip:{background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",borderRadius:8,padding:"10px 12px",color:"#ddd",fontSize:14,outline:"none",width:"100%",boxSizing:"border-box"},
+sl:{background:"#1a1a30",border:"1px solid rgba(255,255,255,.1)",borderRadius:8,padding:"10px 12px",color:"#ddd",fontSize:14,outline:"none",width:"100%",boxSizing:"border-box",cursor:"pointer"},
+sv:{background:"linear-gradient(135deg,#785aff,#9b6dff)",border:"none",borderRadius:8,padding:"12px 0",color:"#fff",fontSize:15,fontWeight:600,cursor:"pointer",minHeight:48},
+};
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
