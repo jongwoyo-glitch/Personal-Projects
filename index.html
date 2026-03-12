@@ -600,6 +600,7 @@ const[ipEdit,sIPE]=useState(false); // inpaint editor open
 const[ipStrength,sIPS]=useState(0.7);
 const[ipBrush,sIPB]=useState(40);
 const[ipErase,sIPEr]=useState(false);
+const[ipMaskUrl,sIPMaskUrl]=useState(null); // stored mask data URL for overlay
 const ipCanvasRef=useRef(null);
 const ipImgRef=useRef(null);
 const ipHistoryRef=useRef([]);
@@ -673,11 +674,35 @@ const doGenerate=async()=>{
   if(!se.apiToken){tw("⚠ API 토큰을 설정하세요");return}
   if(!pBase.trim()&&charPrompts.every(c=>!c.pos.trim())){tw("⚠ 프롬프트가 비어 있습니다");return}
   if(mode==="img2img"&&!baseImg){tw("⚠ Base Image가 없습니다");return}
+  if(mode==="inpaint"&&(!baseImg||!ipMaskUrl)){tw("⚠ Base Image와 마스크가 필요합니다");return}
   sGenLoading(true);sGenError(null);
   try{
     const vibeRefs=activeChars.flatMap(c=>c.refs||[]);
     let url;
-    if(mode==="img2img"&&baseImg){
+    if(mode==="inpaint"&&baseImg&&ipMaskUrl){
+      // Get base image as b64
+      const resp=await fetch(baseImg);const blob=await resp.blob();
+      const img=new Image();const blobUrl=URL.createObjectURL(blob);
+      await new Promise((res,rej)=>{img.onload=res;img.onerror=rej;img.src=blobUrl});
+      const cv=document.createElement("canvas");cv.width=se.width;cv.height=se.height;
+      cv.getContext("2d").drawImage(img,0,0,se.width,se.height);
+      URL.revokeObjectURL(blobUrl);
+      const imgB64=cv.toDataURL("image/png").replace(/^data:[^;]+;base64,/,"");
+      // Get mask as b64
+      const maskImg=new Image();
+      await new Promise(r=>{maskImg.onload=r;maskImg.src=ipMaskUrl});
+      const mc=document.createElement("canvas");mc.width=se.width;mc.height=se.height;
+      const mctx=mc.getContext("2d");mctx.drawImage(maskImg,0,0,se.width,se.height);
+      // Convert blue mask to B&W
+      const md=mctx.getImageData(0,0,mc.width,mc.height);
+      for(let i=0;i<md.data.length;i+=4){
+        const a=md.data[i+3]>30?255:0;
+        md.data[i]=a;md.data[i+1]=a;md.data[i+2]=a;md.data[i+3]=255;
+      }
+      mctx.putImageData(md,0,0);
+      const maskB64=mc.toDataURL("image/png").replace(/^data:[^;]+;base64,/,"");
+      url=await doInpaint(se.apiToken,se,pBase||pO,nBase||nO,imgB64,maskB64,ipStrength);
+    }else if(mode==="img2img"&&baseImg){
       // Convert blob URL to proper PNG base64
       const resp=await fetch(baseImg);const blob=await resp.blob();
       // Draw to canvas to ensure PNG format
@@ -708,7 +733,8 @@ const doGenerate=async()=>{
     }catch(ex){console.warn("History save error:",ex)}
     sHistory(p=>[entry,...p].slice(0,50));
     fetchAnlas(se.apiToken).then(r=>sAnlas(r));
-    tw(mode==="img2img"?"img2img 완료!":"생성 완료!");
+    if(mode==="inpaint"){sIPMaskUrl(null);tw("인페인트 완료!")}
+    else{tw(mode==="img2img"?"img2img 완료!":"생성 완료!")};
   }catch(e){sGenError(e.message);tw("⚠ 생성 실패")}finally{sGenLoading(false)}
 };
 
@@ -760,7 +786,7 @@ const initIpCanvas=useCallback(()=>{
   ipHistoryRef.current=[];
 },[se.width,se.height]);
 
-useEffect(()=>{if(ipEdit&&genImg)setTimeout(initIpCanvas,100)},[ipEdit,genImg,initIpCanvas]);
+useEffect(()=>{if(ipEdit&&baseImg)setTimeout(initIpCanvas,100)},[ipEdit,baseImg,initIpCanvas]);
 
 const getIpXY=(e)=>{
   const cv=ipCanvasRef.current;if(!cv)return{x:0,y:0};
@@ -812,15 +838,14 @@ const getImgB64=async()=>{
   URL.revokeObjectURL(blobUrl);
   return cv.toDataURL("image/png").replace(/^data:[^;]+;base64,/,"");
 };
-const execInpaint=async()=>{
-  if(!se.apiToken||!genImg)return;
-  const maskB64=getMaskB64();if(!maskB64){tw("⚠ 마스크를 그려주세요");return}
-  const imgB64=await getImgB64();if(!imgB64)return;
-  sIPE(false);sGenLoading(true);sGenError(null);
-  try{
-    const url=await doInpaint(se.apiToken,se,pBase||pO,nBase||nO,imgB64,maskB64,ipStrength);
-    sGenImg(url);tw("인페인트 완료!");
-  }catch(e){sGenError(e.message);tw("⚠ 인페인트 실패")}finally{sGenLoading(false)}
+const applyIpMask=()=>{
+  const maskUrl=getMaskB64();
+  if(!maskUrl){tw("⚠ 마스크를 그려주세요");return}
+  // Save mask as data URL for overlay + later generation
+  const cv=ipCanvasRef.current;if(!cv)return;
+  sIPMaskUrl(cv.toDataURL("image/png"));
+  sIPE(false);
+  tw("마스크 적용됨 — 생성 버튼으로 인페인트");
 };
 
 /* ── Edit Canvas Helpers (Enhanced) ── */
@@ -1301,6 +1326,7 @@ return(
 </div>
 {/* Controls */}
 <div style={{padding:"8px 10px",borderTop:"1px solid rgba(120,90,255,.1)",flexShrink:0}}>
+{mode==="img2img"&&<React.Fragment>
 <div style={{display:"flex",alignItems:"center",gap:4,marginBottom:4}}>
 <span style={{fontSize:10,color:"#888",minWidth:32}}>강도</span>
 <input type="range" min={0} max={1} step={0.05} value={i2iStrength} onChange={e=>sI2iStr(+e.target.value)} style={{flex:1}}/>
@@ -1311,10 +1337,21 @@ return(
 <input type="range" min={0} max={1} step={0.05} value={i2iNoise} onChange={e=>sI2iNoise(+e.target.value)} style={{flex:1}}/>
 <span style={{fontSize:10,color:"#b095ff",fontFamily:"monospace",minWidth:26,textAlign:"right"}}>{i2iNoise}</span>
 </div>
-<div style={{marginTop:6,fontSize:9,color:"#666",lineHeight:1.4}}>
-{mode==="img2img"&&"이 이미지를 기반으로 재생성합니다"}
-{mode==="inpaint"&&"마스크 영역만 재생성합니다"}
+<div style={{marginTop:6,fontSize:9,color:"#666"}}>이 이미지를 기반으로 재생성합니다</div>
+</React.Fragment>}
+{mode==="inpaint"&&<React.Fragment>
+<div style={{display:"flex",alignItems:"center",gap:4,marginBottom:6}}>
+<span style={{fontSize:10,color:"#888",minWidth:32}}>강도</span>
+<input type="range" min={0} max={1} step={0.05} value={ipStrength} onChange={e=>sIPS(+e.target.value)} style={{flex:1}}/>
+<span style={{fontSize:10,color:"#fa5",fontFamily:"monospace",minWidth:26,textAlign:"right"}}>{ipStrength}</span>
 </div>
+{ipMaskUrl?<div style={{display:"flex",gap:4}}>
+<button onClick={()=>sIPE(true)} style={{...Z.hB,fontSize:10,padding:"4px 10px",color:"#c8b8ff",flex:1}}>✏️ 마스크 수정</button>
+<button onClick={()=>sIPMaskUrl(null)} style={{...Z.hB,fontSize:10,padding:"4px 10px",color:"#f55"}}>✕</button>
+</div>
+:<button onClick={()=>sIPE(true)} style={{...Z.hB,fontSize:10,padding:"4px 10px",color:"#fa5",width:"100%"}}>🖌 마스크 칠하기</button>}
+<div style={{marginTop:6,fontSize:9,color:"#666"}}>{ipMaskUrl?"마스크 적용됨 — 생성 버튼을 누르세요":"마스크를 먼저 칠해주세요"}</div>
+</React.Fragment>}
 </div>
 </div>);
 })()}
@@ -1331,6 +1368,7 @@ return(
 <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",minHeight:0,padding:4}} onDrop={handleDrop} onDragOver={handleDragOver}>
 {genImg?<div style={{height:"100%",aspectRatio:String(ratio),maxWidth:"100%",position:"relative",flexShrink:0,cursor:"pointer"}} onClick={()=>sLB(true)}>
 <img src={genImg} style={{width:"100%",height:"100%",objectFit:"contain",display:"block",borderRadius:4}}/>
+{mode==="inpaint"&&ipMaskUrl&&<img src={ipMaskUrl} style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"contain",borderRadius:4,opacity:0.4,pointerEvents:"none"}}/>}
 {mode!=="txt2img"&&<div style={{position:"absolute",top:6,left:6,fontSize:9,padding:"2px 8px",borderRadius:4,fontWeight:700,backdropFilter:"blur(4px)",
   background:mode==="img2img"?"rgba(120,90,255,.5)":"rgba(255,140,60,.5)",
   color:"#fff"}}>{mode==="img2img"?"IMG2IMG":"INPAINT"}</div>}
@@ -1350,15 +1388,16 @@ return(
 <button onClick={uploadBaseImg} style={{...Z.hB,fontSize:10,padding:"5px 10px",color:"#b095ff"}}>📁 업로드</button>
 <button onClick={()=>{sEditSrc(genImg);sEditMode("edit")}} style={{...Z.hB,fontSize:10,padding:"5px 10px",color:"#5cb8ff"}}>✏️ 편집</button>
 <button onClick={()=>{sEditSrc(genImg);sEditTool("bgremove");sEditMode("bgremove")}} style={{...Z.hB,fontSize:10,padding:"5px 10px",color:"#8d8"}}>🔲 배경제거</button>
-<button onClick={()=>{sBaseImg(genImg);sMode("inpaint");sIPE(true)}} style={{...Z.hB,fontSize:10,padding:"5px 10px",background:mode==="inpaint"?"rgba(255,140,60,.25)":"transparent",color:mode==="inpaint"?"#fa5":"#888"}}>🖌 인페인트</button>
-{mode!=="txt2img"&&<button onClick={()=>{sMode("txt2img");sBaseImg(null)}} style={{...Z.hB,fontSize:10,padding:"5px 10px",color:"#f55"}}>✕</button>}
+<button onClick={()=>{sBaseImg(genImg);sMode("inpaint");sIPMaskUrl(null);sIPE(true)}} style={{...Z.hB,fontSize:10,padding:"5px 10px",background:mode==="inpaint"?"rgba(255,140,60,.25)":"transparent",color:mode==="inpaint"?"#fa5":"#888"}}>🖌 인페인트</button>
+{mode==="inpaint"&&ipMaskUrl&&<button onClick={()=>sIPE(true)} style={{...Z.hB,fontSize:10,padding:"5px 10px",color:"#c8b8ff"}}>✏️ 마스크 수정</button>}
+{mode!=="txt2img"&&<button onClick={()=>{sMode("txt2img");sBaseImg(null);sIPMaskUrl(null)}} style={{...Z.hB,fontSize:10,padding:"5px 10px",color:"#f55"}}>✕</button>}
 </div>}
 
 {/* Generate controls */}
 <div style={{padding:"10px 12px",borderTop:"1px solid rgba(120,90,255,.15)",background:"rgba(10,8,20,.6)",flexShrink:0}}>
 <button className="gen-btn" onClick={doGenerate} disabled={genLoading||!se.apiToken} style={{width:"100%",marginBottom:6}}>
 {genLoading?<span><span className="spinner" style={{width:12,height:12,borderWidth:1.5,marginRight:4,verticalAlign:"middle",display:"inline-block"}}/> 생성중...</span>
-:mode==="img2img"?"🖼 img2img 생성":mode==="inpaint"?"🖌 인페인트 생성":"🎨 이미지 생성"}
+:mode==="img2img"?"🖼 img2img 생성":mode==="inpaint"?(ipMaskUrl?"🖌 인페인트 생성":"🖌 마스크를 칠해주세요"):"🎨 이미지 생성"}
 </button>
 {genError&&<div style={{fontSize:10,color:"#f66",marginBottom:4}}>{genError.slice(0,100)}</div>}
 <div style={{display:"flex",gap:4,alignItems:"center",flexWrap:"wrap"}}>
@@ -1609,7 +1648,7 @@ return(
 <button onClick={()=>{sLB(false);sBaseImg(genImg);sMode("img2img");tw("Base Image 설정됨")}} style={{...Z.hB,fontSize:12,padding:"8px 16px",background:"rgba(120,90,255,.4)",backdropFilter:"blur(4px)"}}>🖼 Base로 사용</button>
 <button onClick={()=>{sLB(false);sEditSrc(genImg);sEditMode("edit")}} style={{...Z.hB,fontSize:12,padding:"8px 16px",background:"rgba(90,180,255,.4)",backdropFilter:"blur(4px)"}}>✏️ 편집</button>
 <button onClick={()=>{sLB(false);sEditSrc(genImg);sEditTool("bgremove");sEditMode("bgremove")}} style={{...Z.hB,fontSize:12,padding:"8px 16px",background:"rgba(100,200,100,.4)",backdropFilter:"blur(4px)"}}>🔲 배경제거</button>
-<button onClick={()=>{sLB(false);sMode("inpaint");sIPE(true)}} style={{...Z.hB,fontSize:12,padding:"8px 16px",background:"rgba(255,140,60,.4)",backdropFilter:"blur(4px)"}}>🖌 인페인트</button>
+<button onClick={()=>{sLB(false);sBaseImg(genImg);sMode("inpaint");sIPMaskUrl(null);sIPE(true)}} style={{...Z.hB,fontSize:12,padding:"8px 16px",background:"rgba(255,140,60,.4)",backdropFilter:"blur(4px)"}}>🖌 인페인트</button>
 </div>
 </div>}
 
@@ -1730,10 +1769,10 @@ backgroundImage:"repeating-conic-gradient(#333 0% 25%, #555 0% 50%)",backgroundS
 </div>}
 
 {/* INPAINT EDITOR */}
-{ipEdit&&genImg&&<div style={{position:"fixed",inset:0,zIndex:9999,background:"#0a0814",display:"flex",flexDirection:"column"}}>
+{ipEdit&&baseImg&&<div style={{position:"fixed",inset:0,zIndex:9999,background:"#0a0814",display:"flex",flexDirection:"column"}}>
 {/* Toolbar */}
 <div style={{display:"flex",alignItems:"center",gap:10,padding:"8px 14px",background:"rgba(20,16,40,.95)",borderBottom:"1px solid rgba(120,90,255,.15)",flexShrink:0,flexWrap:"wrap"}}>
-<span style={{fontSize:13,fontWeight:700,color:"#c8b8ff"}}>🖌 인페인트</span>
+<span style={{fontSize:13,fontWeight:700,color:"#c8b8ff"}}>🖌 인페인트 마스크</span>
 <div style={{display:"flex",alignItems:"center",gap:4}}>
 <span style={{fontSize:10,color:"#888"}}>브러시</span>
 <input type="range" min={5} max={150} value={ipBrush} onChange={e=>sIPB(+e.target.value)} style={{width:80}}/>
@@ -1743,19 +1782,13 @@ backgroundImage:"repeating-conic-gradient(#333 0% 25%, #555 0% 50%)",backgroundS
 <button onClick={ipUndo} style={{...Z.hB,fontSize:11,padding:"4px 10px"}}>↩ 되돌리기</button>
 <button onClick={ipClear} style={{...Z.hB,fontSize:11,padding:"4px 10px",color:"#f66"}}>✕ 초기화</button>
 <div style={{flex:1}}/>
-<div style={{display:"flex",alignItems:"center",gap:4}}>
-<span style={{fontSize:10,color:"#888"}}>강도</span>
-<input type="range" min={0} max={1} step={0.05} value={ipStrength} onChange={e=>sIPS(+e.target.value)} style={{width:70}}/>
-<span style={{fontSize:10,color:"#aaa",fontFamily:"monospace",minWidth:24}}>{ipStrength}</span>
-</div>
-<button onClick={execInpaint} disabled={genLoading} className="gen-btn" style={{fontSize:12,padding:"6px 16px",minHeight:36}}>
-{genLoading?"생성중...":"🎨 인페인트 생성"}</button>
+<button onClick={applyIpMask} className="gen-btn" style={{fontSize:12,padding:"6px 16px",minHeight:36}}>✅ 마스크 적용</button>
 <button onClick={()=>sIPE(false)} style={{...Z.hB,fontSize:14,padding:"4px 10px",color:"#f66"}}>✕</button>
 </div>
 {/* Canvas area */}
 <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",padding:10,minHeight:0}}>
 <div style={{position:"relative",maxWidth:"100%",maxHeight:"100%",aspectRatio:String(se.width/se.height)}}>
-<img ref={ipImgRef} src={genImg} style={{width:"100%",height:"100%",objectFit:"contain",display:"block",borderRadius:4,userSelect:"none",WebkitUserSelect:"none"}} draggable={false}/>
+<img ref={ipImgRef} src={baseImg} style={{width:"100%",height:"100%",objectFit:"contain",display:"block",borderRadius:4,userSelect:"none",WebkitUserSelect:"none"}} draggable={false}/>
 <canvas ref={ipCanvasRef} style={{position:"absolute",inset:0,width:"100%",height:"100%",cursor:"crosshair",touchAction:"none",borderRadius:4}}
   onMouseDown={ipStartDraw} onMouseMove={ipDraw} onMouseUp={ipStopDraw} onMouseLeave={ipStopDraw}
   onTouchStart={ipStartDraw} onTouchMove={ipDraw} onTouchEnd={ipStopDraw}/>
