@@ -13,10 +13,12 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.26.2/babel.min.js" crossorigin="anonymous"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" crossorigin="anonymous"></script>
 <script type="module">
-import imglyRemoveBackground from "https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.7.0/+esm";
-window._imglyRemoveBackground = imglyRemoveBackground;
-window._imglyLoaded = true;
-console.log("[BG-Removal] @imgly/background-removal loaded successfully");
+try{
+  const m=await import("https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.7.0/+esm");
+  window._imglyRemoveBackground=m.default||m.removeBackground||m;
+  window._imglyLoaded=true;
+  console.log("[BG-Removal] loaded OK");
+}catch(e){console.warn("[BG-Removal] module load failed, will retry on use:",e.message)}
 </script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
@@ -101,10 +103,10 @@ async function fetchAnlas(token){
     const active=d.active??d.subscription?.active??false;
     return{anlas:a??0,tier,active,raw:d};
   }catch(e){
-    console.error("fetchAnlas error:",e);
+    console.warn("fetchAnlas:",e.message||e);
     const msg=e.message||"";
     if(msg.includes("Failed to fetch")||msg.includes("NetworkError"))
-      return{anlas:"CORS?",tier:0,active:false,raw:{error:"CORS 또는 네트워크 오류. 브라우저 콘솔(F12)을 확인하세요. 로컬 file:// 에서는 CORS 문제가 발생할 수 있습니다."}};
+      return{anlas:"offline",tier:0,active:false};
     return{anlas:"err",tier:0,active:false,raw:{error:msg}}
   }
 }
@@ -280,14 +282,15 @@ async function augmentImage(token,reqType,width,height,imgB64){
 // Local bg-removal via @imgly/background-removal (ONNX/WASM, free, no API)
 async function localBgRemove(imgBlob,onProgress){
   if(!window._imglyRemoveBackground){
-    // Module script may still be loading - wait a bit
-    onProgress&&onProgress("라이브러리 로딩 대기 중...");
-    for(let i=0;i<30;i++){
-      await new Promise(r=>setTimeout(r,500));
-      if(window._imglyRemoveBackground)break;
-    }
-    if(!window._imglyRemoveBackground){
-      throw new Error("@imgly/background-removal 로드 실패. 페이지를 새로고침 해보세요.");
+    onProgress&&onProgress("라이브러리 로딩 중...");
+    // Try dynamic import as fallback
+    try{
+      const m=await import("https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.7.0/+esm");
+      window._imglyRemoveBackground=m.default||m.removeBackground||m;
+      console.log("[BG-Removal] loaded via dynamic import");
+    }catch(e){
+      console.error("[BG-Removal] dynamic import also failed:",e);
+      throw new Error("배경 제거 라이브러리 로드 실패.\ncoi-serviceworker.js가 같은 폴더에 있는지 확인하세요.\n페이지를 새로고침 후 다시 시도해보세요.");
     }
   }
   onProgress&&onProgress("배경 분석 중... (최초 실행 시 ~40MB 모델 다운로드)");
@@ -301,7 +304,7 @@ async function localBgRemove(imgBlob,onProgress){
       }
     }
   });
-  return result; // Blob (PNG with transparent bg)
+  return result;
 }
 
 function estimateAnlas(se,isOpus,vibeCount,action){
