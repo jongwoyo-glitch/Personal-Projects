@@ -1134,11 +1134,9 @@ const editBgRemove=async(mode)=>{
         }
       }
       oCtx.putImageData(origData,0,0);
-      // Replace source image
+      // Replace source image via state
       const newUrl=out.toDataURL("image/png");
-      editImgRef.current=new Image();
-      editImgRef.current.src=newUrl;
-      await new Promise(r=>{editImgRef.current.onload=r});
+      sEditSrc(newUrl);
       // Clear mask from active layer
       aCtx.clearRect(0,0,acv.width,acv.height);
       compositeEdit();
@@ -1149,9 +1147,7 @@ const editBgRemove=async(mode)=>{
       const out=document.createElement("canvas");out.width=se.width;out.height=se.height;
       out.getContext("2d").drawImage(bgImg,0,0,se.width,se.height);
       const newUrl=out.toDataURL("image/png");
-      editImgRef.current=new Image();
-      editImgRef.current.src=newUrl;
-      await new Promise(r=>{editImgRef.current.onload=r});
+      sEditSrc(newUrl);
       compositeEdit();
       tw("전체 이미지 배경 제거 완료!");
     }
@@ -1497,9 +1493,20 @@ return(
 <button onClick={async()=>{
   const a=document.createElement("a");
   const url=await loadImg();
-  if(url){a.href=url;a.download="NAI_"+h.id+".png";a.click();tw("다운로드")}
+  if(url){a.href=url;a.download="NAI_"+h.id+".png";a.click();tw("PNG")}
   else{tw("⚠ 이미지를 찾을 수 없습니다")}
-}} style={{flex:1,background:"none",border:"none",borderRight:"1px solid rgba(255,255,255,.04)",color:"#8d8",fontSize:10,padding:"6px",cursor:"pointer",fontFamily:"inherit"}}>💾</button>
+}} style={{flex:1,background:"none",border:"none",borderRight:"1px solid rgba(255,255,255,.04)",color:"#8d8",fontSize:9,padding:"6px",cursor:"pointer",fontFamily:"inherit"}}>PNG</button>
+<button onClick={async()=>{
+  const blob=await idbGet(h.id);
+  if(!blob){tw("⚠ 이미지를 찾을 수 없습니다");return}
+  const img=new Image();const u=URL.createObjectURL(blob);
+  await new Promise(r=>{img.onload=r;img.src=u});
+  const cv=document.createElement("canvas");cv.width=img.width||h.w||se.width;cv.height=img.height||h.h||se.height;
+  cv.getContext("2d").drawImage(img,0,0);URL.revokeObjectURL(u);
+  const wb=await new Promise(r=>cv.toBlob(r,"image/webp",0.9));
+  const a=document.createElement("a");a.href=URL.createObjectURL(wb);
+  a.download="NAI_"+h.id+".webp";a.click();tw("WebP");
+}} style={{flex:1,background:"none",border:"none",borderRight:"1px solid rgba(255,255,255,.04)",color:"#5cb8ff",fontSize:9,padding:"6px",cursor:"pointer",fontFamily:"inherit"}}>WebP</button>
 <button onClick={()=>{idbDel(h.id);sHistory(p=>p.filter(x=>x.id!==h.id))}} style={{flex:0,background:"none",border:"none",color:"#f55",fontSize:10,padding:"6px 10px",cursor:"pointer",fontFamily:"inherit"}}>✕</button>
 </div>
 </div>);
@@ -1585,7 +1592,17 @@ return(
   const a=document.createElement("a");a.href=URL.createObjectURL(blob);
   a.download="NAI_bgremoved_"+Date.now()+".png";a.click();
   tw("PNG 내보내기 완료");
-}} className="gen-btn" style={{fontSize:11,padding:"5px 14px",minHeight:32,background:"linear-gradient(135deg,#338844,#55bb77)"}}>💾 PNG 내보내기</button>
+}} className="gen-btn" style={{fontSize:11,padding:"5px 14px",minHeight:32,background:"linear-gradient(135deg,#338844,#55bb77)"}}>💾 PNG</button>
+<button onClick={async()=>{
+  const img=editImgRef.current;if(!img)return;
+  const out=document.createElement("canvas");out.width=se.width;out.height=se.height;
+  const ctx=out.getContext("2d");ctx.drawImage(img,0,0,se.width,se.height);
+  editLayers.forEach(l=>{if(l.visible){const lcv=editLayerCanvases.current[l.id];if(lcv)ctx.drawImage(lcv,0,0)}});
+  const blob=await new Promise(r=>out.toBlob(r,"image/webp",0.9));
+  const a=document.createElement("a");a.href=URL.createObjectURL(blob);
+  a.download="NAI_bgremoved_"+Date.now()+".webp";a.click();
+  tw("WebP 내보내기 완료");
+}} style={{...Z.hB,fontSize:11,padding:"5px 12px",minHeight:32,color:"#5cb8ff"}}>💾 WebP</button>
 <button onClick={()=>{sEditMode(false);sEditSrc(null)}} style={{...Z.hB,fontSize:13,padding:"3px 8px",color:"#f66"}}>✕</button>
 </div>}
 {/* Main area: canvas + layers panel */}
