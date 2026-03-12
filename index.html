@@ -14,7 +14,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" crossorigin="anonymous"></script>
 <script type="module">
 try{
-  const m=await import("https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.7.0/+esm");
+  const m=await import("https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.5.5/+esm");
   window._imglyRemoveBackground=m.default||m.removeBackground||m;
   window._imglyLoaded=true;
   console.log("[BG-Removal] loaded OK");
@@ -283,24 +283,29 @@ async function augmentImage(token,reqType,width,height,imgB64){
 async function localBgRemove(imgBlob,onProgress){
   if(!window._imglyRemoveBackground){
     onProgress&&onProgress("라이브러리 로딩 중...");
-    // Try dynamic import as fallback
     try{
-      const m=await import("https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.7.0/+esm");
+      const m=await import("https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.5.5/+esm");
       window._imglyRemoveBackground=m.default||m.removeBackground||m;
       console.log("[BG-Removal] loaded via dynamic import");
     }catch(e){
-      console.error("[BG-Removal] dynamic import also failed:",e);
-      throw new Error("배경 제거 라이브러리 로드 실패.\ncoi-serviceworker.js가 같은 폴더에 있는지 확인하세요.\n페이지를 새로고침 후 다시 시도해보세요.");
+      console.error("[BG-Removal] load failed:",e);
+      throw new Error("배경 제거 라이브러리 로드 실패. 페이지 새로고침 후 다시 시도해보세요.");
     }
   }
-  onProgress&&onProgress("배경 분석 중... (최초 실행 시 ~40MB 모델 다운로드)");
+  const isolated=window.crossOriginIsolated;
+  onProgress&&onProgress(isolated?"배경 분석 중...":"배경 분석 중... (싱글스레드, 1~2분 소요)");
+  console.log("[BG-Removal] crossOriginIsolated:",isolated,"starting removal...");
   const result=await window._imglyRemoveBackground(imgBlob,{
-    model:"isnet_fp16",
+    model:"isnet_quint8",
     output:{format:"image/png",type:"foreground"},
     progress:(key,current,total)=>{
+      console.log("[BG-Removal] progress:",key,current,"/",total);
       if(total>0){
         const pct=Math.round(current/total*100);
-        onProgress&&onProgress(key.includes("onnx")?"모델 다운로드 "+pct+"%":"처리 중 "+pct+"%");
+        if(key.includes("fetch")||key.includes("download"))
+          onProgress&&onProgress("모델 다운로드 "+pct+"%");
+        else
+          onProgress&&onProgress("처리 중 "+pct+"%");
       }
     }
   });
