@@ -255,23 +255,25 @@ async function generateImage(token,se,basePos,baseNeg,charPrompts,vibeRefs,i2iOp
 async function doInpaint(token,se,basePos,baseNeg,imgB64,maskB64,strength){
   token=token.trim();
   const seed=se.seed?parseInt(se.seed):Math.floor(Math.random()*4294967295);
-  // Dedicated inpainting model names
-  let inpaintModel;
-  if(se.model.includes("-4-5")||se.model.includes("-4-full"))inpaintModel="nai-diffusion-4-full-inpainting";
-  else if(se.model.includes("-4-curated"))inpaintModel="nai-diffusion-4-curated-inpainting";
-  else inpaintModel="nai-diffusion-3-inpainting";
+  // NAI convention: append -inpainting to model name
+  let inpaintModel=se.model+"-inpainting";
+  // V3 fallback
+  if(se.model.includes("nai-diffusion-3"))inpaintModel="nai-diffusion-3-inpainting";
   const negFB="blurry, lowres, error, worst quality, bad quality, jpeg artifacts";
   const negText=baseNeg||negFB;
   const params={
     params_version:3,
     width:se.width,height:se.height,scale:se.scale,sampler:se.sampler,steps:se.steps,
     seed:seed,n_samples:1,ucPreset:0,qualityToggle:true,
-    sm:false,sm_dyn:false,
+    sm:false,sm_dyn:false,autoSmea:false,
     dynamic_thresholding:false,controlnet_strength:1,legacy:false,
     add_original_image:true,cfg_rescale:0,noise_schedule:"karras",
     legacy_v3_extend:false,skip_cfg_above_sigma:null,
     extra_noise_seed:seed,
     image:imgB64,mask:maskB64,strength:strength,noise:0,
+    inpaintImg2ImgStrength:strength,
+    deliberate_euler_ancestral_bug:false,prefer_brownian:true,
+    normalize_reference_strength_multiple:true,
     use_coords:false,characterPrompts:[],
     v4_prompt:{caption:{base_caption:basePos,char_captions:[]},use_coords:false,use_order:true},
     v4_negative_prompt:{caption:{base_caption:negText,char_captions:[]}},
@@ -285,7 +287,22 @@ async function doInpaint(token,se,basePos,baseNeg,imgB64,maskB64,strength){
   console.log("Payload (no img/mask):",JSON.stringify({...payload,parameters:{...params,image:"[b64]",mask:"[b64]"}}).slice(0,1500));
   const url="https://image.novelai.net/ai/generate-image";
   const resp=await fetch(url,{method:"POST",body:JSON.stringify(payload),headers:{"Authorization":"Bearer "+token,"Content-Type":"application/json"}});
-  if(!resp.ok){const e=await resp.text();console.error("NAI inpaint err:",resp.status,e);throw new Error("NAI "+resp.status+": "+e.slice(0,200))}
+  if(!resp.ok){
+    const e=await resp.text();
+    console.error("NAI inpaint err:",resp.status,e);
+    // If 500 and using V4.5, try V4 inpainting model as fallback
+    if(resp.status===500&&inpaintModel.includes("-4-5")){
+      const fbModel=inpaintModel.replace("-4-5-","-4-");
+      console.warn("Trying fallback model:",fbModel);
+      payload.model=fbModel;
+      const resp2=await fetch(url,{method:"POST",body:JSON.stringify(payload),headers:{"Authorization":"Bearer "+token,"Content-Type":"application/json"}});
+      if(!resp2.ok){const e2=await resp2.text();throw new Error("NAI "+resp2.status+" (fallback): "+e2.slice(0,200))}
+      const blob2=await resp2.blob();
+      try{const zip=await JSZip.loadAsync(blob2);const f=Object.keys(zip.files);if(!f.length)throw 0;return URL.createObjectURL(await zip.files[f[0]].async("blob"))}
+      catch(e2){if(blob2.type?.startsWith("image/"))return URL.createObjectURL(blob2);throw new Error("응답 파싱 실패 (fallback)")}
+    }
+    throw new Error("NAI "+resp.status+": "+e.slice(0,200));
+  }
   const blob=await resp.blob();
   try{const zip=await JSZip.loadAsync(blob);const f=Object.keys(zip.files);if(!f.length)throw 0;return URL.createObjectURL(await zip.files[f[0]].async("blob"))}
   catch(e){if(blob.type?.startsWith("image/"))return URL.createObjectURL(blob);throw new Error("응답 파싱 실패")}
@@ -701,6 +718,16 @@ const doGenerate=async()=>{
       }
       mctx.putImageData(md,0,0);
       const maskB64=mc.toDataURL("image/png").replace(/^data:[^;]+;base64,/,"");
+      console.log("=== INPAINT DEBUG ===");
+      console.log("BaseImg source:",baseImg?.slice(0,80));
+      console.log("Image size:",se.width,"x",se.height);
+      console.log("ImgB64 length:",imgB64.length);
+      console.log("MaskB64 length:",maskB64.length);
+      console.log("Strength:",ipStrength);
+      console.log("Model will be:",se.model+"-inpainting");
+      // Preview mask in console
+      console.log("%cMask preview","font-size:12px;color:orange");
+      console.log("%c ","font-size:1px;padding:50px;background:url("+mc.toDataURL()+") no-repeat center/contain");
       url=await doInpaint(se.apiToken,se,pBase||pO,nBase||nO,imgB64,maskB64,ipStrength);
     }else if(mode==="img2img"&&baseImg){
       // Convert blob URL to proper PNG base64
