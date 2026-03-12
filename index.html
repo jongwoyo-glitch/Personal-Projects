@@ -72,6 +72,29 @@ const LS="nai-pb-v4";const PK="nai-pb";const FS=!!window.showSaveFilePicker;
 function ll(k,f){try{const v=localStorage.getItem(k);return v?JSON.parse(v):f}catch{return f}}
 function ls(k,d){try{localStorage.setItem(k,JSON.stringify(d))}catch{}}
 
+// IndexedDB for full-size image storage
+const IDB_NAME="nai-pb-images";const IDB_STORE="images";
+function idbOpen(){
+  return new Promise((res,rej)=>{
+    const req=indexedDB.open(IDB_NAME,1);
+    req.onupgradeneeded=()=>req.result.createObjectStore(IDB_STORE);
+    req.onsuccess=()=>res(req.result);
+    req.onerror=()=>rej(req.error);
+  });
+}
+async function idbPut(id,blob){
+  try{const db=await idbOpen();const tx=db.transaction(IDB_STORE,"readwrite");tx.objectStore(IDB_STORE).put(blob,id);await new Promise(r=>{tx.oncomplete=r});db.close()}catch(e){console.warn("idbPut:",e)}
+}
+async function idbGet(id){
+  try{const db=await idbOpen();const tx=db.transaction(IDB_STORE,"readonly");const req=tx.objectStore(IDB_STORE).get(id);return new Promise((res,rej)=>{req.onsuccess=()=>{db.close();res(req.result||null)};req.onerror=()=>{db.close();res(null)}})}catch(e){return null}
+}
+async function idbDel(id){
+  try{const db=await idbOpen();const tx=db.transaction(IDB_STORE,"readwrite");tx.objectStore(IDB_STORE).delete(id);await new Promise(r=>{tx.oncomplete=r});db.close()}catch(e){}
+}
+async function idbClear(){
+  try{const db=await idbOpen();const tx=db.transaction(IDB_STORE,"readwrite");tx.objectStore(IDB_STORE).clear();await new Promise(r=>{tx.oncomplete=r});db.close()}catch(e){}
+}
+
 const DS={apiToken:"",model:"nai-diffusion-4-5-full",width:832,height:1216,steps:23,scale:6,sampler:"k_euler_ancestral",seed:"",smea:false,smeaDyn:false,format:"png",defaultFilename:"nai-pb-backup",tier:3,anlasBalance:10000};
 const MO=[{v:"nai-diffusion-4-5-full",l:"V4.5 Full"},{v:"nai-diffusion-4-5-curated",l:"V4.5 Curated"},{v:"nai-diffusion-4-full",l:"V4 Full"},{v:"nai-diffusion-4-curated-preview",l:"V4 Curated"},{v:"nai-diffusion-3",l:"V3 Anime"}];
 const SA=[{v:"k_euler",l:"Euler"},{v:"k_euler_ancestral",l:"Euler Ancestral"},{v:"k_dpmpp_2s_ancestral",l:"DPM++ 2S Ancestral"},{v:"k_dpmpp_2m",l:"DPM++ 2M"},{v:"k_dpmpp_sde",l:"DPM++ SDE"},{v:"ddim_v3",l:"DDIM"}];
@@ -559,7 +582,7 @@ const ipCanvasRef=useRef(null);
 const ipImgRef=useRef(null);
 const ipHistoryRef=useRef([]);
 // Edit canvas state
-const[editMode,sEditMode]=useState(false);
+const[editMode,sEditMode]=useState(false); // false | "edit" | "bgremove"
 const[editSrc,sEditSrc]=useState(null); // source image for editor (genImg or history)
 const[editBrush,sEditBrush]=useState(20);
 const[editColor,sEditColor]=useState("#ff0000");
@@ -596,7 +619,7 @@ useEffect(()=>{
 },[]);
 
 useEffect(()=>{ls(LS,D)},[D]);
-useEffect(()=>{ls("nai-pb-hist",history.map(h=>({...h,imgUrl:undefined})).slice(0,50))},[history]);
+useEffect(()=>{ls("nai-pb-hist",history.slice(0,50))},[history]);
 useEffect(()=>{if(!se.apiToken)return void sAnlas(null);fetchAnlas(se.apiToken).then(r=>sAnlas(r))},[se.apiToken]);
 
 const tw=m=>{sTs(m);setTimeout(()=>sTs(null),2000)};
@@ -649,15 +672,18 @@ const doGenerate=async()=>{
     sGenImg(url);
     const est=estimateAnlas(se,se.tier>=3,vibeRefs.length,mode==="img2img"?"img2img":"generate");
     if(!est.free&&est.cost>0){up(p=>({...p,settings:{...p.settings,anlasBalance:Math.max(0,(p.settings.anlasBalance||0)-est.cost)}}))}
-    const entry={id:G(),date:new Date().toISOString(),prompt:pBase.slice(0,100),neg:nBase.slice(0,60),model:se.model,w:se.width,h:se.height,steps:se.steps,char:activeChars.map(c=>c.name).join(",")||"",seed:se.seed||"random",thumb:null,imgUrl:url};
-    // Generate thumbnail async
+    const entry={id:G(),date:new Date().toISOString(),prompt:pBase.slice(0,100),neg:nBase.slice(0,60),model:se.model,w:se.width,h:se.height,steps:se.steps,char:activeChars.map(c=>c.name).join(",")||"",seed:se.seed||"random",thumb:null};
+    // Store full image in IndexedDB + generate thumbnail
     try{const resp2=await fetch(url);const blob2=await resp2.blob();
+      // Save full image to IDB
+      await idbPut(entry.id,blob2);
+      // Generate thumbnail
       const img2=new Image();const u2=URL.createObjectURL(blob2);
       await new Promise(r=>{img2.onload=r;img2.src=u2});
       const tc=document.createElement("canvas");tc.width=120;tc.height=Math.round(120*se.height/se.width);
       tc.getContext("2d").drawImage(img2,0,0,tc.width,tc.height);
       entry.thumb=tc.toDataURL("image/webp",0.5);URL.revokeObjectURL(u2);
-    }catch(ex){}
+    }catch(ex){console.warn("History save error:",ex)}
     sHistory(p=>[entry,...p].slice(0,50));
     fetchAnlas(se.apiToken).then(r=>sAnlas(r));
     tw(mode==="img2img"?"img2img 완료!":"생성 완료!");
@@ -1304,7 +1330,8 @@ return(
 <button onClick={downloadImg} style={{...Z.hB,fontSize:10,padding:"5px 10px"}}>💾 저장</button>
 <button onClick={()=>{sBaseImg(genImg);sMode("img2img");tw("Base Image 설정됨")}} style={{...Z.hB,fontSize:10,padding:"5px 10px",background:mode==="img2img"?"rgba(120,90,255,.25)":"transparent",borderColor:mode==="img2img"?"rgba(120,90,255,.4)":"rgba(255,255,255,.1)",color:mode==="img2img"?"#b095ff":"#888"}}>🖼 Base</button>
 <button onClick={uploadBaseImg} style={{...Z.hB,fontSize:10,padding:"5px 10px",color:"#b095ff"}}>📁 업로드</button>
-<button onClick={()=>{sEditSrc(genImg);sEditMode(true)}} style={{...Z.hB,fontSize:10,padding:"5px 10px",color:"#5cb8ff"}}>✏️ 편집</button>
+<button onClick={()=>{sEditSrc(genImg);sEditMode("edit")}} style={{...Z.hB,fontSize:10,padding:"5px 10px",color:"#5cb8ff"}}>✏️ 편집</button>
+<button onClick={()=>{sEditSrc(genImg);sEditTool("bgremove");sEditMode("bgremove")}} style={{...Z.hB,fontSize:10,padding:"5px 10px",color:"#8d8"}}>🔲 배경제거</button>
 <button onClick={()=>{sBaseImg(genImg);sMode("inpaint");sIPE(true)}} style={{...Z.hB,fontSize:10,padding:"5px 10px",background:mode==="inpaint"?"rgba(255,140,60,.25)":"transparent",color:mode==="inpaint"?"#fa5":"#888"}}>🖌 인페인트</button>
 {mode!=="txt2img"&&<button onClick={()=>{sMode("txt2img");sBaseImg(null)}} style={{...Z.hB,fontSize:10,padding:"5px 10px",color:"#f55"}}>✕</button>}
 </div>}
@@ -1407,16 +1434,40 @@ return(
 <span style={{fontSize:13,fontWeight:700,color:"#b095ff"}}>📋 생성 히스토리</span>
 <span style={{fontSize:10,color:"#555"}}>{history.length}건</span>
 <div style={{flex:1}}/>
-{history.length>0&&<button onClick={()=>{if(confirm("전체 히스토리를 삭제하시겠습니까?"))sHistory([])}} style={{...Z.hB,fontSize:10,padding:"4px 10px",color:"#f55"}}>🗑 전체 삭제</button>}
+{history.length>0&&<button onClick={async()=>{
+  tw("ZIP 생성 중...");
+  const zip=new JSZip();let count=0;
+  for(const h of history){
+    const blob=await idbGet(h.id);
+    if(blob){zip.file("NAI_"+new Date(h.date).toISOString().replace(/[:.]/g,"-").slice(0,19)+".png",blob);count++}
+  }
+  if(count===0){tw("⚠ 저장된 이미지가 없습니다");return}
+  const zipBlob=await zip.generateAsync({type:"blob"});
+  const a=document.createElement("a");a.href=URL.createObjectURL(zipBlob);
+  a.download="NAI_history_"+new Date().toISOString().slice(0,10)+".zip";a.click();
+  tw(count+"개 이미지 ZIP 다운로드");
+}} style={{...Z.hB,fontSize:10,padding:"4px 10px",color:"#5cb8ff"}}>📦 ZIP 다운로드</button>}
+{history.length>0&&<button onClick={()=>{if(confirm("전체 히스토리를 삭제하시겠습니까?")){sHistory([]);idbClear()}}} style={{...Z.hB,fontSize:10,padding:"4px 10px",color:"#f55"}}>🗑 전체 삭제</button>}
 </div>
 {/* History grid */}
 <div className="scroll-y" style={{flex:1,padding:12,overflow:"auto"}}>
 {history.length===0&&<div style={{textAlign:"center",color:"#444",padding:40,fontSize:13}}>생성 기록이 없습니다</div>}
 <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(160px, 1fr))",gap:10}}>
-{history.map(h=>(
+{history.map(h=>{
+  const loadImg=async()=>{
+    const blob=await idbGet(h.id);
+    if(blob){return URL.createObjectURL(blob)}
+    if(h.imgUrl){return h.imgUrl}
+    return null;
+  };
+  return(
 <div key={h.id} style={{background:"rgba(255,255,255,.03)",border:"1px solid rgba(255,255,255,.06)",borderRadius:8,overflow:"hidden",display:"flex",flexDirection:"column"}}>
-{/* Thumbnail */}
-<div style={{aspectRatio:String(se.width/se.height),background:"#111",display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}>
+{/* Thumbnail — click to view full */}
+<div onClick={async()=>{
+  const url=await loadImg();
+  if(url){sGenImg(url);sPage("gen");tw("이미지 불러옴")}
+  else{tw("⚠ 이미지를 찾을 수 없습니다")}
+}} style={{aspectRatio:String((h.w||se.width)/(h.h||se.height)),background:"#111",display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",cursor:"pointer"}}>
 {h.thumb?<img src={h.thumb} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
 :<div style={{color:"#333",fontSize:10}}>미리보기 없음</div>}
 </div>
@@ -1428,16 +1479,31 @@ return(
 </div>
 {/* Actions */}
 <div style={{display:"flex",borderTop:"1px solid rgba(255,255,255,.04)",flexShrink:0}}>
-{h.imgUrl&&<button onClick={async()=>{
-  sGenImg(h.imgUrl);sPage("gen");tw("이미지 불러옴");
-}} style={{flex:1,background:"none",border:"none",borderRight:"1px solid rgba(255,255,255,.04)",color:"#b095ff",fontSize:10,padding:"6px",cursor:"pointer",fontFamily:"inherit"}}>불러오기</button>}
-{h.imgUrl&&<button onClick={()=>{
-  sEditSrc(h.imgUrl);sEditMode(true);tw("편집 모드");
-}} style={{flex:1,background:"none",border:"none",borderRight:"1px solid rgba(255,255,255,.04)",color:"#5cb8ff",fontSize:10,padding:"6px",cursor:"pointer",fontFamily:"inherit"}}>편집</button>}
-<button onClick={()=>{sHistory(p=>p.filter(x=>x.id!==h.id))}} style={{flex:0,background:"none",border:"none",color:"#f55",fontSize:10,padding:"6px 10px",cursor:"pointer",fontFamily:"inherit"}}>✕</button>
+<button onClick={async()=>{
+  const url=await loadImg();
+  if(url){sGenImg(url);sPage("gen");tw("이미지 불러옴")}
+  else{tw("⚠ 이미지를 찾을 수 없습니다")}
+}} style={{flex:1,background:"none",border:"none",borderRight:"1px solid rgba(255,255,255,.04)",color:"#b095ff",fontSize:10,padding:"6px",cursor:"pointer",fontFamily:"inherit"}}>불러오기</button>
+<button onClick={async()=>{
+  const url=await loadImg();
+  if(url){sEditSrc(url);sEditMode("edit");tw("편집 모드")}
+  else{tw("⚠ 이미지를 찾을 수 없습니다")}
+}} style={{flex:1,background:"none",border:"none",borderRight:"1px solid rgba(255,255,255,.04)",color:"#5cb8ff",fontSize:10,padding:"6px",cursor:"pointer",fontFamily:"inherit"}}>✏️</button>
+<button onClick={async()=>{
+  const url=await loadImg();
+  if(url){sEditSrc(url);sEditTool("bgremove");sEditMode("bgremove");tw("배경 제거 모드")}
+  else{tw("⚠ 이미지를 찾을 수 없습니다")}
+}} style={{flex:1,background:"none",border:"none",borderRight:"1px solid rgba(255,255,255,.04)",color:"#8d8",fontSize:10,padding:"6px",cursor:"pointer",fontFamily:"inherit"}}>🔲</button>
+<button onClick={async()=>{
+  const a=document.createElement("a");
+  const url=await loadImg();
+  if(url){a.href=url;a.download="NAI_"+h.id+".png";a.click();tw("다운로드")}
+  else{tw("⚠ 이미지를 찾을 수 없습니다")}
+}} style={{flex:1,background:"none",border:"none",borderRight:"1px solid rgba(255,255,255,.04)",color:"#8d8",fontSize:10,padding:"6px",cursor:"pointer",fontFamily:"inherit"}}>💾</button>
+<button onClick={()=>{idbDel(h.id);sHistory(p=>p.filter(x=>x.id!==h.id))}} style={{flex:0,background:"none",border:"none",color:"#f55",fontSize:10,padding:"6px 10px",cursor:"pointer",fontFamily:"inherit"}}>✕</button>
 </div>
-</div>
-))}
+</div>);
+})}
 </div>
 </div>
 </div>}
@@ -1449,59 +1515,83 @@ return(
 <div style={{position:"absolute",bottom:16,display:"flex",gap:8}} onClick={e=>e.stopPropagation()}>
 <button onClick={downloadImg} style={{...Z.hB,fontSize:12,padding:"8px 16px",background:"rgba(120,90,255,.4)",backdropFilter:"blur(4px)"}}>💾 저장</button>
 <button onClick={()=>{sLB(false);sBaseImg(genImg);sMode("img2img");tw("Base Image 설정됨")}} style={{...Z.hB,fontSize:12,padding:"8px 16px",background:"rgba(120,90,255,.4)",backdropFilter:"blur(4px)"}}>🖼 Base로 사용</button>
-<button onClick={()=>{sLB(false);sEditSrc(genImg);sEditMode(true)}} style={{...Z.hB,fontSize:12,padding:"8px 16px",background:"rgba(90,180,255,.4)",backdropFilter:"blur(4px)"}}>✏️ 편집</button>
+<button onClick={()=>{sLB(false);sEditSrc(genImg);sEditMode("edit")}} style={{...Z.hB,fontSize:12,padding:"8px 16px",background:"rgba(90,180,255,.4)",backdropFilter:"blur(4px)"}}>✏️ 편집</button>
+<button onClick={()=>{sLB(false);sEditSrc(genImg);sEditTool("bgremove");sEditMode("bgremove")}} style={{...Z.hB,fontSize:12,padding:"8px 16px",background:"rgba(100,200,100,.4)",backdropFilter:"blur(4px)"}}>🔲 배경제거</button>
 <button onClick={()=>{sLB(false);sMode("inpaint");sIPE(true)}} style={{...Z.hB,fontSize:12,padding:"8px 16px",background:"rgba(255,140,60,.4)",backdropFilter:"blur(4px)"}}>🖌 인페인트</button>
 </div>
 </div>}
 
 {/* EDIT CANVAS */}
 {editMode&&editImg&&<div style={{position:"fixed",inset:0,zIndex:9999,background:"#0a0814",display:"flex",flexDirection:"column"}}>
-{/* Toolbar */}
-<div style={{display:"flex",alignItems:"center",gap:6,padding:"6px 12px",background:"rgba(20,16,40,.95)",borderBottom:"1px solid rgba(90,180,255,.15)",flexShrink:0,flexWrap:"wrap"}}>
-<span style={{fontSize:12,fontWeight:700,color:"#5cb8ff"}}>✏️ 편집</span>
-{/* Tool buttons */}
-{[["brush","🖌"],["eraser","🧹"],["eyedropper","💧"],["blur","🌫"],["bgremove","🔲"]].map(([t,icon])=>
+{/* Toolbar - Edit Mode */}
+{editMode==="edit"&&<div style={{display:"flex",alignItems:"center",gap:6,padding:"6px 12px",background:"rgba(20,16,40,.95)",borderBottom:"1px solid rgba(90,180,255,.15)",flexShrink:0,flexWrap:"wrap"}}>
+<span style={{fontSize:12,fontWeight:700,color:"#5cb8ff"}}>✏️ 이미지 편집</span>
+{[["brush","🖌"],["eraser","🧹"],["eyedropper","💧"],["blur","🌫"]].map(([t,icon])=>
 <button key={t} onClick={()=>sEditTool(t)} style={{...Z.hB,fontSize:11,padding:"3px 8px",minWidth:36,
   background:editTool===t?"rgba(90,180,255,.25)":"transparent",
   borderColor:editTool===t?"rgba(90,180,255,.4)":"rgba(255,255,255,.1)",
-  color:editTool===t?"#5cb8ff":"#888"}} title={t==="bgremove"?"영역 선택 → 배경 제거":t}>{icon}</button>)}
+  color:editTool===t?"#5cb8ff":"#888"}}>{icon}</button>)}
 <div style={{width:1,height:20,background:"rgba(255,255,255,.08)"}}/>
-{/* Color */}
 <div onClick={()=>sShowCW(true)} style={{width:24,height:24,borderRadius:4,background:editColor,cursor:"pointer",border:"2px solid rgba(255,255,255,.3)",flexShrink:0}} title="색상환 열기"/>
 {["#ff0000","#ff8800","#ffee00","#00cc44","#0088ff","#aa44ff","#ffffff","#000000","#c97850","#ffccaa"].map(c=>
 <div key={c} onClick={()=>{sEditColor(c);sEditTool("brush")}} style={{width:16,height:16,borderRadius:2,background:c,cursor:"pointer",border:editColor===c?"2px solid #fff":"1px solid rgba(255,255,255,.15)",flexShrink:0}}/>)}
 <div style={{width:1,height:20,background:"rgba(255,255,255,.08)"}}/>
-{/* Brush size */}
 <span style={{fontSize:9,color:"#888"}}>크기</span>
 <input type="range" min={1} max={100} value={editBrush} onChange={e=>sEditBrush(+e.target.value)} style={{width:60}}/>
 <span style={{fontSize:9,color:"#aaa",fontFamily:"monospace",minWidth:18}}>{editBrush}</span>
-{/* Opacity */}
 <span style={{fontSize:9,color:"#888"}}>투명</span>
 <input type="range" min={0.1} max={1} step={0.1} value={editOpacity} onChange={e=>sEditOpacity(+e.target.value)} style={{width:40}}/>
 <span style={{fontSize:9,color:"#aaa",fontFamily:"monospace",minWidth:16}}>{editOpacity}</span>
-{/* Blur strength (only when blur tool) */}
 {editTool==="blur"&&<React.Fragment>
 <span style={{fontSize:9,color:"#888"}}>블러</span>
 <input type="range" min={2} max={10} value={editBlurStr} onChange={e=>sEditBlurStr(+e.target.value)} style={{width:40}}/>
 <span style={{fontSize:9,color:"#aaa",fontFamily:"monospace",minWidth:12}}>{editBlurStr}</span>
 </React.Fragment>}
 <div style={{width:1,height:20,background:"rgba(255,255,255,.08)"}}/>
-<button onClick={editUndo} style={{...Z.hB,fontSize:10,padding:"3px 8px"}} title="Ctrl+Z / 두 손가락 탭">↩</button>
+<button onClick={editUndo} style={{...Z.hB,fontSize:10,padding:"3px 8px"}} title="Ctrl+Z">↩</button>
 <button onClick={editClear} style={{...Z.hB,fontSize:10,padding:"3px 8px",color:"#f66"}}>✕ 초기화</button>
 <span style={{fontSize:9,color:"#555"}}>{Math.round(editZoom*100)}%</span>
 <button onClick={()=>{sEditZoom(1);sEditPan({x:0,y:0})}} style={{...Z.hB,fontSize:9,padding:"2px 6px"}}>1:1</button>
-{editTool==="bgremove"&&!bgRemoving&&<span style={{fontSize:9,color:"#8d8",padding:"2px 6px",background:"rgba(100,200,100,.1)",borderRadius:4}}>영역 칠하기(선택) 또는 바로 실행 →</span>}
-{editTool==="bgremove"&&!bgRemoving&&<button onClick={()=>editBgRemove("local")} style={{...Z.hB,fontSize:10,padding:"4px 10px",color:"#8d8",borderColor:"rgba(100,200,100,.3)",background:"rgba(100,200,100,.1)"}}>🔲 로컬 (무료)</button>}
-{editTool==="bgremove"&&!bgRemoving&&se.apiToken&&<button onClick={()=>{if(!confirm("NAI API를 사용합니다.\nAnlas가 소모됩니다. 계속?"))return;editBgRemove("nai")}} style={{...Z.hB,fontSize:10,padding:"4px 10px",color:"#da5",borderColor:"rgba(255,180,60,.3)",background:"rgba(255,180,60,.1)"}}>🔲 NAI (Anlas)</button>}
-{bgRemoving&&<span style={{fontSize:10,color:"#5cb8ff",padding:"2px 8px",background:"rgba(90,180,255,.1)",borderRadius:4,display:"flex",alignItems:"center",gap:4}}><span className="spinner" style={{width:10,height:10,borderWidth:1.5,display:"inline-block"}}/> {bgProgress}</span>}
 <div style={{flex:1}}/>
 <button onClick={editApply} className="gen-btn" style={{fontSize:11,padding:"5px 14px",minHeight:32,background:"linear-gradient(135deg,#3388ff,#5cb8ff)"}}>✅ 적용 → Base</button>
 <button onClick={()=>{sEditMode(false);sEditSrc(null)}} style={{...Z.hB,fontSize:13,padding:"3px 8px",color:"#f66"}}>✕</button>
-</div>
+</div>}
+
+{/* Toolbar - BG Remove Mode */}
+{editMode==="bgremove"&&<div style={{display:"flex",alignItems:"center",gap:6,padding:"6px 12px",background:"rgba(20,16,40,.95)",borderBottom:"1px solid rgba(100,200,100,.15)",flexShrink:0,flexWrap:"wrap"}}>
+<span style={{fontSize:12,fontWeight:700,color:"#8d8"}}>🔲 배경 제거</span>
+<div style={{width:1,height:20,background:"rgba(255,255,255,.08)"}}/>
+<span style={{fontSize:9,color:"#888"}}>브러시</span>
+<input type="range" min={5} max={100} value={editBrush} onChange={e=>sEditBrush(+e.target.value)} style={{width:80}}/>
+<span style={{fontSize:9,color:"#aaa",fontFamily:"monospace",minWidth:18}}>{editBrush}</span>
+<button onClick={()=>sEditTool(editTool==="eraser"?"bgremove":"eraser")} style={{...Z.hB,fontSize:11,padding:"3px 8px",
+  background:editTool==="eraser"?"rgba(255,60,60,.2)":"rgba(100,200,100,.15)",
+  color:editTool==="eraser"?"#f66":"#8d8"}}>{editTool==="eraser"?"🧹 지우기":"🖌 영역 선택"}</button>
+<button onClick={editUndo} style={{...Z.hB,fontSize:10,padding:"3px 8px"}} title="Ctrl+Z">↩</button>
+<button onClick={editClear} style={{...Z.hB,fontSize:10,padding:"3px 8px",color:"#f66"}}>✕ 초기화</button>
+<div style={{width:1,height:20,background:"rgba(255,255,255,.08)"}}/>
+<span style={{fontSize:9,color:"#aaa"}}>영역을 칠하면 부분 제거, 안 칠하면 전체 제거</span>
+{!bgRemoving&&<button onClick={()=>editBgRemove("local")} className="gen-btn" style={{fontSize:11,padding:"5px 14px",minHeight:32,background:"linear-gradient(135deg,#338844,#55bb77)"}}>🔲 배경 제거 (로컬·무료)</button>}
+{!bgRemoving&&se.apiToken&&<button onClick={()=>{if(!confirm("NAI API를 사용합니다.\nAnlas가 소모됩니다. 계속?"))return;editBgRemove("nai")}} style={{...Z.hB,fontSize:10,padding:"4px 10px",color:"#da5",borderColor:"rgba(255,180,60,.3)",background:"rgba(255,180,60,.1)"}}>NAI (Anlas)</button>}
+{bgRemoving&&<span style={{fontSize:10,color:"#5cb8ff",padding:"2px 8px",background:"rgba(90,180,255,.1)",borderRadius:4,display:"flex",alignItems:"center",gap:4}}><span className="spinner" style={{width:10,height:10,borderWidth:1.5,display:"inline-block"}}/> {bgProgress}</span>}
+<span style={{fontSize:9,color:"#555"}}>{Math.round(editZoom*100)}%</span>
+<div style={{flex:1}}/>
+<button onClick={async()=>{
+  const img=editImgRef.current;if(!img)return;
+  const out=document.createElement("canvas");out.width=se.width;out.height=se.height;
+  const ctx=out.getContext("2d");ctx.drawImage(img,0,0,se.width,se.height);
+  editLayers.forEach(l=>{if(l.visible){const lcv=editLayerCanvases.current[l.id];if(lcv)ctx.drawImage(lcv,0,0)}});
+  const blob=await new Promise(r=>out.toBlob(r,"image/png"));
+  const a=document.createElement("a");a.href=URL.createObjectURL(blob);
+  a.download="NAI_bgremoved_"+Date.now()+".png";a.click();
+  tw("PNG 내보내기 완료");
+}} className="gen-btn" style={{fontSize:11,padding:"5px 14px",minHeight:32,background:"linear-gradient(135deg,#338844,#55bb77)"}}>💾 PNG 내보내기</button>
+<button onClick={()=>{sEditMode(false);sEditSrc(null)}} style={{...Z.hB,fontSize:13,padding:"3px 8px",color:"#f66"}}>✕</button>
+</div>}
 {/* Main area: canvas + layers panel */}
 <div style={{flex:1,display:"flex",overflow:"hidden",minHeight:0}}>
 {/* Color Wheel */}
-{showCW&&<React.Fragment><div style={{position:"fixed",inset:0,zIndex:10000}} onClick={()=>sShowCW(false)}/><ColorWheel color={editColor} onChange={c=>sEditColor(c)} onClose={()=>sShowCW(false)}/></React.Fragment>}
+{editMode==="edit"&&showCW&&<React.Fragment><div style={{position:"fixed",inset:0,zIndex:10000}} onClick={()=>sShowCW(false)}/><ColorWheel color={editColor} onChange={c=>sEditColor(c)} onClose={()=>sShowCW(false)}/></React.Fragment>}
 {/* Canvas area with zoom/pan */}
 <div style={{flex:1,overflow:"hidden",position:"relative",display:"flex",alignItems:"center",justifyContent:"center"}} onWheel={editWheel}>
 <div ref={editWrapRef} style={{position:"relative",transform:`scale(${editZoom}) translate(${editPan.x/editZoom}px,${editPan.y/editZoom}px)`,transformOrigin:"center center",transition:editPinch.current?"none":"transform 0.1s",aspectRatio:String(se.width/se.height),maxWidth:"90%",maxHeight:"90%",
@@ -1516,8 +1606,8 @@ backgroundImage:"repeating-conic-gradient(#333 0% 25%, #555 0% 50%)",backgroundS
 {brushPreview&&<div style={{position:"absolute",left:brushPreview.x-brushPreview.size/2*editZoom,top:brushPreview.y-brushPreview.size/2*editZoom,width:brushPreview.size*editZoom,height:brushPreview.size*editZoom,borderRadius:"50%",border:"2px solid rgba(255,255,255,.7)",pointerEvents:"none",boxShadow:"0 0 0 1px rgba(0,0,0,.4)"}}/>}
 </div>
 </div>
-{/* Layers panel */}
-<div style={{width:140,borderLeft:"1px solid rgba(90,180,255,.1)",background:"rgba(10,8,20,.6)",display:"flex",flexDirection:"column",flexShrink:0}}>
+{/* Layers panel - only in edit mode */}
+{editMode==="edit"&&<div style={{width:140,borderLeft:"1px solid rgba(90,180,255,.1)",background:"rgba(10,8,20,.6)",display:"flex",flexDirection:"column",flexShrink:0}}>
 <div style={{padding:"6px 8px",borderBottom:"1px solid rgba(90,180,255,.08)",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
 <span style={{fontSize:10,fontWeight:700,color:"#5cb8ff"}}>레이어</span>
 <button onClick={()=>addEditLayer()} style={{...Z.pB,width:20,height:20,fontSize:10}}>+</button>
@@ -1533,7 +1623,7 @@ backgroundImage:"repeating-conic-gradient(#333 0% 25%, #555 0% 50%)",backgroundS
 {editLayers.length>1&&<button onClick={e=>{e.stopPropagation();const lid=l.id;delete editLayerCanvases.current[lid];sEditLayers(p=>p.filter(x=>x.id!==lid));if(editActiveLayer===lid)sEditActiveLayer(editLayers.find(x=>x.id!==lid)?.id)}} style={{background:"none",border:"none",color:"#f55",fontSize:9,cursor:"pointer",padding:0}}>✕</button>}
 </div>))}
 </div>
-</div>
+</div>}
 </div>
 </div>}
 
