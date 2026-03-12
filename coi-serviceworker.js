@@ -32,7 +32,7 @@ if(typeof window==="undefined"){
       return;
     }
     const reg=await navigator.serviceWorker.register(window.document.currentScript.src,{
-      scope:window.document.currentScript.getAttribute("data-scope")||"/"
+      scope:window.document.currentScript.getAttribute("data-scope")||"./"
     });
     console.log("[COI] Service worker registered, reloading...");
     if(reg.active&&!navigator.serviceWorker.controller){
