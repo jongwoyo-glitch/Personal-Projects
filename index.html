@@ -573,8 +573,29 @@ const Rz=({panel})=><div className="resizer" onMouseDown={e=>onResizeStart(panel
 const[anlas,sAnlas]=useState(null); // {anlas, tier, active}
 const[history,sHistory]=useState(()=>ll("nai-pb-hist",[]));
 const[page,sPage]=useState("gen");
-const[histMenu,sHistMenu]=useState(null); // history item id for open dropdown // "gen" | "post"
-const[lightbox,sLB]=useState(false);
+const[histMenu,sHistMenu]=useState(null);
+const[histGallery,sHistGallery]=useState(null); // {idx, url} for fullscreen gallery
+
+// Gallery keyboard navigation
+useEffect(()=>{
+  if(!histGallery)return;
+  const fn=async(e)=>{
+    if(e.key==="Escape"){sHistGallery(null);return}
+    if(e.key==="ArrowLeft"&&histGallery.idx>0){
+      const ni=histGallery.idx-1;const h=history[ni];if(!h)return;
+      const blob=await idbGet(h.id);const url=blob?URL.createObjectURL(blob):null;
+      if(url)sHistGallery({idx:ni,url});
+    }
+    if(e.key==="ArrowRight"&&histGallery.idx<history.length-1){
+      const ni=histGallery.idx+1;const h=history[ni];if(!h)return;
+      const blob=await idbGet(h.id);const url=blob?URL.createObjectURL(blob):null;
+      if(url)sHistGallery({idx:ni,url});
+    }
+  };
+  window.addEventListener("keydown",fn);
+  return()=>window.removeEventListener("keydown",fn);
+},[histGallery,history]);
+const[lightbox,sLB]=useState(false); // "gen" | "post"
 const[ipEdit,sIPE]=useState(false); // inpaint editor open
 const[ipStrength,sIPS]=useState(0.7);
 const[ipBrush,sIPB]=useState(40);
@@ -1459,11 +1480,13 @@ return(
   };
   return(
 <div key={h.id} style={{background:"rgba(255,255,255,.03)",border:"1px solid rgba(255,255,255,.06)",borderRadius:8,overflow:"hidden",display:"flex",flexDirection:"column"}}>
-{/* Thumbnail — click to view full */}
+{/* Thumbnail — click to view in gallery */}
 <div onClick={async()=>{
-  const url=await loadImg();
-  if(url){sGenImg(url);sPage("gen");tw("이미지 불러옴")}
-  else{tw("⚠ 이미지를 찾을 수 없습니다")}
+  const idx=history.findIndex(x=>x.id===h.id);
+  const blob=await idbGet(h.id);
+  const url=blob?URL.createObjectURL(blob):(h.imgUrl||null);
+  if(url)sHistGallery({idx,url});
+  else tw("⚠ 이미지를 찾을 수 없습니다");
 }} style={{aspectRatio:String((h.w||se.width)/(h.h||se.height)),background:"#111",display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",cursor:"pointer"}}>
 {h.thumb?<img src={h.thumb} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
 :<div style={{color:"#333",fontSize:10}}>미리보기 없음</div>}
@@ -1516,6 +1539,66 @@ return(
 })}
 </div>
 </div>
+</div>}
+
+{/* HISTORY GALLERY */}
+{histGallery&&<div style={{position:"fixed",inset:0,zIndex:9998,background:"rgba(0,0,0,.92)",display:"flex",flexDirection:"column",backdropFilter:"blur(8px)"}}>
+{/* Image area - click to close */}
+<div onClick={()=>sHistGallery(null)} style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",padding:"16px 60px",minHeight:0,overflow:"hidden",position:"relative"}}>
+{/* Left arrow */}
+{histGallery.idx>0&&<div onClick={async(e)=>{
+  e.stopPropagation();
+  const ni=histGallery.idx-1;const h=history[ni];if(!h)return;
+  const blob=await idbGet(h.id);const url=blob?URL.createObjectURL(blob):null;
+  if(url)sHistGallery({idx:ni,url});
+}} style={{position:"absolute",left:8,top:"50%",transform:"translateY(-50%)",width:44,height:44,borderRadius:"50%",background:"rgba(255,255,255,.08)",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:20,color:"#aaa",zIndex:2}}>‹</div>}
+{/* Right arrow */}
+{histGallery.idx<history.length-1&&<div onClick={async(e)=>{
+  e.stopPropagation();
+  const ni=histGallery.idx+1;const h=history[ni];if(!h)return;
+  const blob=await idbGet(h.id);const url=blob?URL.createObjectURL(blob):null;
+  if(url)sHistGallery({idx:ni,url});
+}} style={{position:"absolute",right:8,top:"50%",transform:"translateY(-50%)",width:44,height:44,borderRadius:"50%",background:"rgba(255,255,255,.08)",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:20,color:"#aaa",zIndex:2}}>›</div>}
+<img src={histGallery.url} style={{maxWidth:"100%",maxHeight:"100%",objectFit:"contain",borderRadius:4}}/>
+</div>
+{/* Bottom bar */}
+{(()=>{const h=history[histGallery.idx];if(!h)return null;
+  const gLoadImg=async()=>{const blob=await idbGet(h.id);return blob?URL.createObjectURL(blob):null};
+  return(
+<div onClick={e=>e.stopPropagation()} style={{flexShrink:0,padding:"10px 16px",background:"rgba(10,8,20,.8)",borderTop:"1px solid rgba(255,255,255,.08)",display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+{/* Info */}
+<div style={{flex:1,minWidth:120}}>
+<div style={{fontSize:10,color:"#aaa",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}} title={h.prompt}>{h.prompt||"(프롬프트 없음)"}</div>
+<div style={{fontSize:9,color:"#555",marginTop:2}}>{h.w}×{h.h} · {h.steps}st{h.char?" · "+h.char:""} · {new Date(h.date).toLocaleString("ko-KR",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"})}</div>
+</div>
+{/* Counter */}
+<span style={{fontSize:10,color:"#555",fontFamily:"monospace"}}>{histGallery.idx+1} / {history.length}</span>
+<div style={{width:1,height:24,background:"rgba(255,255,255,.08)"}}/>
+{/* Action buttons */}
+<button onClick={async()=>{const url=await gLoadImg();if(url){sGenImg(url);sHistGallery(null);sPage("gen");tw("불러오기")}}} style={{...Z.hB,fontSize:11,padding:"6px 14px",color:"#b095ff"}}>🖼 불러오기</button>
+<button onClick={async()=>{const url=histGallery.url;const a=document.createElement("a");a.href=url;a.download="NAI_"+h.id+".png";a.click();tw("PNG 저장")}} style={{...Z.hB,fontSize:11,padding:"6px 14px",color:"#8d8"}}>💾 PNG</button>
+<button onClick={async()=>{
+  const blob=await idbGet(h.id);if(!blob)return;
+  const img=new Image();const u=URL.createObjectURL(blob);
+  await new Promise(r=>{img.onload=r;img.src=u});
+  const cv=document.createElement("canvas");cv.width=img.width||h.w||se.width;cv.height=img.height||h.h||se.height;
+  cv.getContext("2d").drawImage(img,0,0);URL.revokeObjectURL(u);
+  const wb=await new Promise(r=>cv.toBlob(r,"image/webp",0.9));
+  const a=document.createElement("a");a.href=URL.createObjectURL(wb);a.download="NAI_"+h.id+".webp";a.click();tw("WebP 저장");
+}} style={{...Z.hB,fontSize:11,padding:"6px 14px",color:"#5cb8ff"}}>💾 WebP</button>
+<div style={{width:1,height:24,background:"rgba(255,255,255,.08)"}}/>
+<button onClick={async()=>{const url=await gLoadImg();if(url){sHistGallery(null);sEditSrc(url);sEditMode("edit")}}} style={{...Z.hB,fontSize:11,padding:"6px 14px",color:"#5cb8ff"}}>✏️ 편집</button>
+<button onClick={async()=>{const url=await gLoadImg();if(url){sHistGallery(null);sEditSrc(url);sEditTool("bgremove");sEditMode("bgremove")}}} style={{...Z.hB,fontSize:11,padding:"6px 14px",color:"#8d8"}}>🔲 배경제거</button>
+<div style={{width:1,height:24,background:"rgba(255,255,255,.08)"}}/>
+<button onClick={()=>{idbDel(h.id);sHistory(p=>p.filter(x=>x.id!==h.id));
+  if(history.length<=1)sHistGallery(null);
+  else{const ni=Math.min(histGallery.idx,history.length-2);
+    const nh=history.filter(x=>x.id!==h.id)[ni];
+    if(nh)idbGet(nh.id).then(b=>{const u=b?URL.createObjectURL(b):null;sHistGallery(u?{idx:ni,url:u}:null)});
+    else sHistGallery(null)}
+}} style={{...Z.hB,fontSize:11,padding:"6px 14px",color:"#f55"}}>🗑 삭제</button>
+</div>);
+})()}
 </div>}
 
 {/* LIGHTBOX */}
