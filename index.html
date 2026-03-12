@@ -1360,7 +1360,7 @@ return(
 </div>
 {ipMaskUrl?<div style={{display:"flex",gap:4}}>
 <button onClick={()=>sIPE(true)} style={{...Z.hB,fontSize:10,padding:"4px 10px",color:"#c8b8ff",flex:1}}>✏️ 마스크 수정</button>
-<button onClick={()=>sIPMaskUrl(null);sIPMaskB64(null)} style={{...Z.hB,fontSize:10,padding:"4px 10px",color:"#f55"}}>✕</button>
+<button onClick={()=>{sIPMaskUrl(null);sIPMaskB64(null)}} style={{...Z.hB,fontSize:10,padding:"4px 10px",color:"#f55"}}>✕</button>
 </div>
 :<button onClick={()=>sIPE(true)} style={{...Z.hB,fontSize:10,padding:"4px 10px",color:"#fa5",width:"100%"}}>🖌 마스크 칠하기</button>}
 <div style={{marginTop:6,fontSize:9,color:"#666"}}>{ipMaskUrl?"마스크 적용됨 — 생성 버튼을 누르세요":"마스크를 먼저 칠해주세요"}</div>
