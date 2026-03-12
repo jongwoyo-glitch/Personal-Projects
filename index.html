@@ -617,7 +617,8 @@ const[ipEdit,sIPE]=useState(false); // inpaint editor open
 const[ipStrength,sIPS]=useState(0.7);
 const[ipBrush,sIPB]=useState(40);
 const[ipErase,sIPEr]=useState(false);
-const[ipMaskUrl,sIPMaskUrl]=useState(null); // stored mask data URL for overlay
+const[ipMaskUrl,sIPMaskUrl]=useState(null); // visual overlay for preview
+const[ipMaskB64,sIPMaskB64]=useState(null); // processed B&W mask base64 for API
 const ipCanvasRef=useRef(null);
 const ipImgRef=useRef(null);
 const ipHistoryRef=useRef([]);
@@ -691,12 +692,12 @@ const doGenerate=async()=>{
   if(!se.apiToken){tw("⚠ API 토큰을 설정하세요");return}
   if(!pBase.trim()&&charPrompts.every(c=>!c.pos.trim())){tw("⚠ 프롬프트가 비어 있습니다");return}
   if(mode==="img2img"&&!baseImg){tw("⚠ Base Image가 없습니다");return}
-  if(mode==="inpaint"&&(!baseImg||!ipMaskUrl)){tw("⚠ Base Image와 마스크가 필요합니다");return}
+  if(mode==="inpaint"&&(!baseImg||!ipMaskB64)){tw("⚠ Base Image와 마스크가 필요합니다");return}
   sGenLoading(true);sGenError(null);
   try{
     const vibeRefs=activeChars.flatMap(c=>c.refs||[]);
     let url;
-    if(mode==="inpaint"&&baseImg&&ipMaskUrl){
+    if(mode==="inpaint"&&baseImg&&ipMaskB64){
       // Get base image as b64
       const resp=await fetch(baseImg);const blob=await resp.blob();
       const img=new Image();const blobUrl=URL.createObjectURL(blob);
@@ -705,30 +706,14 @@ const doGenerate=async()=>{
       cv.getContext("2d").drawImage(img,0,0,se.width,se.height);
       URL.revokeObjectURL(blobUrl);
       const imgB64=cv.toDataURL("image/png").replace(/^data:[^;]+;base64,/,"");
-      // Get mask as b64
-      const maskImg=new Image();
-      await new Promise(r=>{maskImg.onload=r;maskImg.src=ipMaskUrl});
-      const mc=document.createElement("canvas");mc.width=se.width;mc.height=se.height;
-      const mctx=mc.getContext("2d");mctx.drawImage(maskImg,0,0,se.width,se.height);
-      // Convert blue mask to B&W
-      const md=mctx.getImageData(0,0,mc.width,mc.height);
-      for(let i=0;i<md.data.length;i+=4){
-        const a=md.data[i+3]>30?255:0;
-        md.data[i]=a;md.data[i+1]=a;md.data[i+2]=a;md.data[i+3]=255;
-      }
-      mctx.putImageData(md,0,0);
-      const maskB64=mc.toDataURL("image/png").replace(/^data:[^;]+;base64,/,"");
+      // Use pre-processed B&W mask directly
       console.log("=== INPAINT DEBUG ===");
-      console.log("BaseImg source:",baseImg?.slice(0,80));
       console.log("Image size:",se.width,"x",se.height);
       console.log("ImgB64 length:",imgB64.length);
-      console.log("MaskB64 length:",maskB64.length);
+      console.log("MaskB64 length:",ipMaskB64.length);
       console.log("Strength:",ipStrength);
-      console.log("Model will be:",se.model+"-inpainting");
-      // Preview mask in console
-      console.log("%cMask preview","font-size:12px;color:orange");
-      console.log("%c ","font-size:1px;padding:50px;background:url("+mc.toDataURL()+") no-repeat center/contain");
-      url=await doInpaint(se.apiToken,se,pBase||pO,nBase||nO,imgB64,maskB64,ipStrength);
+      console.log("Model:",se.model+"-inpainting");
+      url=await doInpaint(se.apiToken,se,pBase||pO,nBase||nO,imgB64,ipMaskB64,ipStrength);
     }else if(mode==="img2img"&&baseImg){
       // Convert blob URL to proper PNG base64
       const resp=await fetch(baseImg);const blob=await resp.blob();
@@ -760,7 +745,7 @@ const doGenerate=async()=>{
     }catch(ex){console.warn("History save error:",ex)}
     sHistory(p=>[entry,...p].slice(0,50));
     fetchAnlas(se.apiToken).then(r=>sAnlas(r));
-    if(mode==="inpaint"){sIPMaskUrl(null);tw("인페인트 완료!")}
+    if(mode==="inpaint"){sIPMaskUrl(null);sIPMaskB64(null);tw("인페인트 완료!")}
     else{tw(mode==="img2img"?"img2img 완료!":"생성 완료!")};
   }catch(e){sGenError(e.message);tw("⚠ 생성 실패")}finally{sGenLoading(false)}
 };
@@ -866,11 +851,12 @@ const getImgB64=async()=>{
   return cv.toDataURL("image/png").replace(/^data:[^;]+;base64,/,"");
 };
 const applyIpMask=()=>{
-  const maskUrl=getMaskB64();
-  if(!maskUrl){tw("⚠ 마스크를 그려주세요");return}
-  // Save mask as data URL for overlay + later generation
-  const cv=ipCanvasRef.current;if(!cv)return;
-  sIPMaskUrl(cv.toDataURL("image/png"));
+  const maskB64=getMaskB64();
+  if(!maskB64){tw("⚠ 마스크를 그려주세요");return}
+  // Store processed B&W mask as base64 (ready for API)
+  sIPMaskB64(maskB64);
+  // Store visual overlay for preview
+  const cv=ipCanvasRef.current;if(cv)sIPMaskUrl(cv.toDataURL("image/png"));
   sIPE(false);
   tw("마스크 적용됨 — 생성 버튼으로 인페인트");
 };
@@ -1374,7 +1360,7 @@ return(
 </div>
 {ipMaskUrl?<div style={{display:"flex",gap:4}}>
 <button onClick={()=>sIPE(true)} style={{...Z.hB,fontSize:10,padding:"4px 10px",color:"#c8b8ff",flex:1}}>✏️ 마스크 수정</button>
-<button onClick={()=>sIPMaskUrl(null)} style={{...Z.hB,fontSize:10,padding:"4px 10px",color:"#f55"}}>✕</button>
+<button onClick={()=>sIPMaskUrl(null);sIPMaskB64(null)} style={{...Z.hB,fontSize:10,padding:"4px 10px",color:"#f55"}}>✕</button>
 </div>
 :<button onClick={()=>sIPE(true)} style={{...Z.hB,fontSize:10,padding:"4px 10px",color:"#fa5",width:"100%"}}>🖌 마스크 칠하기</button>}
 <div style={{marginTop:6,fontSize:9,color:"#666"}}>{ipMaskUrl?"마스크 적용됨 — 생성 버튼을 누르세요":"마스크를 먼저 칠해주세요"}</div>
@@ -1415,9 +1401,9 @@ return(
 <button onClick={uploadBaseImg} style={{...Z.hB,fontSize:10,padding:"5px 10px",color:"#b095ff"}}>📁 업로드</button>
 <button onClick={()=>{sEditSrc(genImg);sEditMode("edit")}} style={{...Z.hB,fontSize:10,padding:"5px 10px",color:"#5cb8ff"}}>✏️ 편집</button>
 <button onClick={()=>{sEditSrc(genImg);sEditTool("bgremove");sEditMode("bgremove")}} style={{...Z.hB,fontSize:10,padding:"5px 10px",color:"#8d8"}}>🔲 배경제거</button>
-<button onClick={()=>{sBaseImg(genImg);sMode("inpaint");sIPMaskUrl(null);sIPE(true)}} style={{...Z.hB,fontSize:10,padding:"5px 10px",background:mode==="inpaint"?"rgba(255,140,60,.25)":"transparent",color:mode==="inpaint"?"#fa5":"#888"}}>🖌 인페인트</button>
+<button onClick={()=>{sBaseImg(genImg);sMode("inpaint");sIPMaskUrl(null);sIPMaskB64(null);sIPE(true)}} style={{...Z.hB,fontSize:10,padding:"5px 10px",background:mode==="inpaint"?"rgba(255,140,60,.25)":"transparent",color:mode==="inpaint"?"#fa5":"#888"}}>🖌 인페인트</button>
 {mode==="inpaint"&&ipMaskUrl&&<button onClick={()=>sIPE(true)} style={{...Z.hB,fontSize:10,padding:"5px 10px",color:"#c8b8ff"}}>✏️ 마스크 수정</button>}
-{mode!=="txt2img"&&<button onClick={()=>{sMode("txt2img");sBaseImg(null);sIPMaskUrl(null)}} style={{...Z.hB,fontSize:10,padding:"5px 10px",color:"#f55"}}>✕</button>}
+{mode!=="txt2img"&&<button onClick={()=>{sMode("txt2img");sBaseImg(null);sIPMaskUrl(null);sIPMaskB64(null)}} style={{...Z.hB,fontSize:10,padding:"5px 10px",color:"#f55"}}>✕</button>}
 </div>}
 
 {/* Generate controls */}
@@ -1675,7 +1661,7 @@ return(
 <button onClick={()=>{sLB(false);sBaseImg(genImg);sMode("img2img");tw("Base Image 설정됨")}} style={{...Z.hB,fontSize:12,padding:"8px 16px",background:"rgba(120,90,255,.4)",backdropFilter:"blur(4px)"}}>🖼 Base로 사용</button>
 <button onClick={()=>{sLB(false);sEditSrc(genImg);sEditMode("edit")}} style={{...Z.hB,fontSize:12,padding:"8px 16px",background:"rgba(90,180,255,.4)",backdropFilter:"blur(4px)"}}>✏️ 편집</button>
 <button onClick={()=>{sLB(false);sEditSrc(genImg);sEditTool("bgremove");sEditMode("bgremove")}} style={{...Z.hB,fontSize:12,padding:"8px 16px",background:"rgba(100,200,100,.4)",backdropFilter:"blur(4px)"}}>🔲 배경제거</button>
-<button onClick={()=>{sLB(false);sBaseImg(genImg);sMode("inpaint");sIPMaskUrl(null);sIPE(true)}} style={{...Z.hB,fontSize:12,padding:"8px 16px",background:"rgba(255,140,60,.4)",backdropFilter:"blur(4px)"}}>🖌 인페인트</button>
+<button onClick={()=>{sLB(false);sBaseImg(genImg);sMode("inpaint");sIPMaskUrl(null);sIPMaskB64(null);sIPE(true)}} style={{...Z.hB,fontSize:12,padding:"8px 16px",background:"rgba(255,140,60,.4)",backdropFilter:"blur(4px)"}}>🖌 인페인트</button>
 </div>
 </div>}
 
