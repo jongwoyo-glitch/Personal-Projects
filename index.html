@@ -1082,20 +1082,51 @@ const editBgRemove=async(mode)=>{
       URL.revokeObjectURL(bUrl);
     }
 
-    // Apply result
-    editSaveSnap();
-    aCtx.clearRect(0,0,acv.width,acv.height);
-    aCtx.drawImage(bgImg,0,0,se.width,se.height);
+    // Apply result — replace source image with bg-removed version
+    console.log("[BG-Removal] result image:",bgImg.width,"x",bgImg.height);
 
     if(hasMask){
-      // Clip to mask area only
-      const resultData=aCtx.getImageData(0,0,acv.width,acv.height);
+      // Masked mode: only replace pixels within painted mask area
+      // Build new source: original + bg-removed blended by mask
+      editSaveSnap();
+      const out=document.createElement("canvas");out.width=se.width;out.height=se.height;
+      const oCtx=out.getContext("2d");
+      // Start with original
+      oCtx.drawImage(img,0,0,se.width,se.height);
+      const origData=oCtx.getImageData(0,0,se.width,se.height);
+      // Draw bg-removed
+      oCtx.clearRect(0,0,se.width,se.height);
+      oCtx.drawImage(bgImg,0,0,se.width,se.height);
+      const bgData=oCtx.getImageData(0,0,se.width,se.height);
+      // Blend: where mask is painted, use bg-removed; elsewhere keep original
       for(let i=0;i<aData.data.length;i+=4){
-        if(aData.data[i+3]<20) resultData.data[i+3]=0;
+        if(aData.data[i+3]>20){
+          origData.data[i]=bgData.data[i];
+          origData.data[i+1]=bgData.data[i+1];
+          origData.data[i+2]=bgData.data[i+2];
+          origData.data[i+3]=bgData.data[i+3];
+        }
       }
-      aCtx.putImageData(resultData,0,0);
+      oCtx.putImageData(origData,0,0);
+      // Replace source image
+      const newUrl=out.toDataURL("image/png");
+      editImgRef.current=new Image();
+      editImgRef.current.src=newUrl;
+      await new Promise(r=>{editImgRef.current.onload=r});
+      // Clear mask from active layer
+      aCtx.clearRect(0,0,acv.width,acv.height);
+      compositeEdit();
       tw("선택 영역 배경 제거 완료!");
     }else{
+      // Full mode: replace entire source image
+      editSaveSnap();
+      const out=document.createElement("canvas");out.width=se.width;out.height=se.height;
+      out.getContext("2d").drawImage(bgImg,0,0,se.width,se.height);
+      const newUrl=out.toDataURL("image/png");
+      editImgRef.current=new Image();
+      editImgRef.current.src=newUrl;
+      await new Promise(r=>{editImgRef.current.onload=r});
+      compositeEdit();
       tw("전체 이미지 배경 제거 완료!");
     }
     compositeEdit();
@@ -1473,7 +1504,8 @@ return(
 {showCW&&<React.Fragment><div style={{position:"fixed",inset:0,zIndex:10000}} onClick={()=>sShowCW(false)}/><ColorWheel color={editColor} onChange={c=>sEditColor(c)} onClose={()=>sShowCW(false)}/></React.Fragment>}
 {/* Canvas area with zoom/pan */}
 <div style={{flex:1,overflow:"hidden",position:"relative",display:"flex",alignItems:"center",justifyContent:"center"}} onWheel={editWheel}>
-<div ref={editWrapRef} style={{position:"relative",transform:`scale(${editZoom}) translate(${editPan.x/editZoom}px,${editPan.y/editZoom}px)`,transformOrigin:"center center",transition:editPinch.current?"none":"transform 0.1s",aspectRatio:String(se.width/se.height),maxWidth:"90%",maxHeight:"90%"}}>
+<div ref={editWrapRef} style={{position:"relative",transform:`scale(${editZoom}) translate(${editPan.x/editZoom}px,${editPan.y/editZoom}px)`,transformOrigin:"center center",transition:editPinch.current?"none":"transform 0.1s",aspectRatio:String(se.width/se.height),maxWidth:"90%",maxHeight:"90%",
+backgroundImage:"repeating-conic-gradient(#333 0% 25%, #555 0% 50%)",backgroundSize:"16px 16px"}}>
 <img ref={editImgRef} src={editImg} style={{width:"100%",height:"100%",objectFit:"contain",display:"block",userSelect:"none",WebkitUserSelect:"none"}} draggable={false}/>
 <canvas ref={editCanvasRef} style={{position:"absolute",inset:0,width:"100%",height:"100%",
   cursor:editTool==="eyedropper"?"crosshair":editTool==="blur"?"cell":editTool==="bgremove"?"crosshair":"default",touchAction:"none"}}
