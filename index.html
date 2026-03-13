@@ -1162,7 +1162,16 @@ const editTouchStart=(e)=>{
     const dist=Math.hypot(t[0].clientX-t[1].clientX,t[0].clientY-t[1].clientY);
     const cx=(t[0].clientX+t[1].clientX)/2;
     const cy=(t[0].clientY+t[1].clientY)/2;
-    editPinch.current={dist,cx,cy,zoom:editZoom,pan:{...editPan},moved:false,time:Date.now()};
+    // Get container center for focal-point zoom
+    const wrap=editWrapRef.current;
+    const parent=wrap?.parentElement;
+    const pr=parent?.getBoundingClientRect();
+    const ccx=pr?(pr.left+pr.width/2):cx;
+    const ccy=pr?(pr.top+pr.height/2):cy;
+    // Focal offset = pinch center relative to (container center + pan)
+    const focalX=cx-ccx-editPan.x;
+    const focalY=cy-ccy-editPan.y;
+    editPinch.current={dist,cx,cy,zoom:editZoom,pan:{...editPan},focalX,focalY,moved:false,time:Date.now()};
     return;
   }
   // Pencil-only mode: ignore finger touches
@@ -1175,15 +1184,21 @@ const editTouchMove=(e)=>{
     const t=e.touches;
     const dist=Math.hypot(t[0].clientX-t[1].clientX,t[0].clientY-t[1].clientY);
     const scale=dist/editPinch.current.dist;
+    const cx=(t[0].clientX+t[1].clientX)/2;
+    const cy=(t[0].clientY+t[1].clientY)/2;
     // Mark as moved if pinch/pan exceeds threshold
-    if(Math.abs(scale-1)>0.05||Math.abs((t[0].clientX+t[1].clientX)/2-editPinch.current.cx)>10||Math.abs((t[0].clientY+t[1].clientY)/2-editPinch.current.cy)>10){
+    if(Math.abs(scale-1)>0.05||Math.abs(cx-editPinch.current.cx)>10||Math.abs(cy-editPinch.current.cy)>10){
       editPinch.current.moved=true;
     }
     const newZoom=Math.max(0.25,Math.min(5,editPinch.current.zoom*scale));
-    const cx=(t[0].clientX+t[1].clientX)/2;
-    const cy=(t[0].clientY+t[1].clientY)/2;
+    // Focal-point zoom: pan so pinch center stays over same canvas point
+    const{pan:P0,cx:cx0,cy:cy0,focalX,focalY}=editPinch.current;
+    const newPan={
+      x:P0.x+(cx-cx0)+focalX*(1-scale),
+      y:P0.y+(cy-cy0)+focalY*(1-scale)
+    };
     sEditZoom(newZoom);
-    sEditPan({x:editPinch.current.pan.x+(cx-editPinch.current.cx),y:editPinch.current.pan.y+(cy-editPinch.current.cy)});
+    sEditPan(newPan);
     return;
   }
   if(pencilOnly&&e.touches[0]&&e.touches[0].touchType!=="stylus"){return}
@@ -1227,7 +1242,19 @@ useEffect(()=>{
   return()=>window.removeEventListener("keydown",fn);
 },[editMode,se.width,se.height]);
 
-const editWheel=(e)=>{e.preventDefault();sEditZoom(z=>Math.max(0.25,Math.min(5,z*(e.deltaY>0?0.9:1.1))))};
+const editWheel=(e)=>{
+  e.preventDefault();
+  const factor=e.deltaY>0?0.9:1.1;
+  const newZoom=Math.max(0.25,Math.min(5,editZoom*factor));
+  const scale=newZoom/editZoom;
+  // Focal-point: zoom toward cursor
+  const parent=e.currentTarget;const pr=parent.getBoundingClientRect();
+  const ccx=pr.left+pr.width/2,ccy=pr.top+pr.height/2;
+  const focalX=e.clientX-ccx-editPan.x;
+  const focalY=e.clientY-ccy-editPan.y;
+  sEditPan(p=>({x:p.x+focalX*(1-scale),y:p.y+focalY*(1-scale)}));
+  sEditZoom(newZoom);
+};
 
 const editApply=()=>{
   if(!editImg)return;
