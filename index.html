@@ -693,6 +693,11 @@ const[showCW,sShowCW]=useState(false); // color wheel visible
 const[editSel,sEditSel]=useState(null); // Uint8Array selection mask (1=selected, 0=not)
 const[wandTol,sWandTol]=useState(32); // wand tolerance 0-255
 const[wandContig,sWandContig]=useState(true); // contiguous selection
+const editSelPath=useRef(null); // cached Path2D for selection clipping
+const editToolNames={brush:"브러시",eraser:"지우개",eyedropper:"스포이드",blur:"블러",wand:"선택"};
+const[editShortcuts,sEditShortcuts]=useState(()=>{try{return JSON.parse(localStorage.getItem("nai_edit_shortcuts"))||{}}catch{return{}}});
+const[shortcutModal,sShortcutModal]=useState(null); // tool id being configured
+const longPressTimer=useRef(null);
 const[editLayers,sEditLayers]=useState([]); // [{id,name,visible}] - metadata only
 const[editActiveLayer,sEditActiveLayer]=useState(null);
 const editCanvasRef=useRef(null);
@@ -1071,8 +1076,57 @@ const compositeEdit=()=>{
     ctx.drawImage(editStrokeCanvas.current,0,0);
     ctx.globalAlpha=1;
   }
+  // Selection mask overlay: darken non-selected areas
+  if(editSel){
+    const w=cv.width,h=cv.height;
+    const ov=document.createElement("canvas");ov.width=w;ov.height=h;
+    const oCtx=ov.getContext("2d");
+    // Fill entire overlay with semi-transparent black
+    oCtx.fillStyle="rgba(0,0,0,0.45)";
+    oCtx.fillRect(0,0,w,h);
+    // Punch out selected pixels (make them transparent)
+    const ovD=oCtx.getImageData(0,0,w,h);
+    const dd=ovD.data;
+    for(let i=0;i<w*h;i++){if(editSel[i])dd[i*4+3]=0;}
+    oCtx.putImageData(ovD,0,0);
+    ctx.drawImage(ov,0,0);
+    // Marching ants border — draw 1px white outline around selection edge
+    const bd=ctx.getImageData(0,0,w,h);
+    for(let y=0;y<h;y++){for(let x=0;x<w;x++){
+      const idx=y*w+x;
+      if(!editSel[idx])continue;
+      // Check 4 neighbors — if any neighbor is unselected or out of bounds, this is an edge pixel
+      const isEdge=(x===0||!editSel[idx-1])||(x===w-1||!editSel[idx+1])||(y===0||!editSel[idx-w])||(y===h-1||!editSel[idx+w]);
+      if(isEdge){
+        // Animated dotted pattern: alternate black/white based on position+time
+        const p=bd.data,pi=idx*4;
+        p[pi]=255;p[pi+1]=255;p[pi+2]=255;p[pi+3]=200;
+      }
+    }}
+    ctx.putImageData(bd,0,0);
+  }
 };
-useEffect(()=>{if(editMode)compositeEdit()},[editMode,editLayers,editActiveLayer]);
+useEffect(()=>{if(editMode)compositeEdit()},[editMode,editLayers,editActiveLayer,editSel]);
+
+// Persist shortcuts
+useEffect(()=>{try{localStorage.setItem("nai_edit_shortcuts",JSON.stringify(editShortcuts))}catch{}},[editShortcuts]);
+
+// Keyboard shortcut listener for edit mode
+useEffect(()=>{
+  if(editMode!=="edit")return;
+  const handler=(e)=>{
+    if(e.target.tagName==="INPUT"||e.target.tagName==="TEXTAREA"||e.target.tagName==="SELECT")return;
+    if(shortcutModal)return; // modal is capturing
+    const key=e.key.toLowerCase();
+    for(const[tool,k] of Object.entries(editShortcuts)){
+      if(k.toLowerCase()===key){e.preventDefault();sEditTool(tool);return;}
+    }
+  };
+  window.addEventListener("keydown",handler);
+  return()=>window.removeEventListener("keydown",handler);
+},[editMode,editShortcuts,shortcutModal]);
+// Clear shortcut modal when leaving edit mode
+useEffect(()=>{if(editMode!=="edit")sShortcutModal(null)},[editMode]);
 
 const getActiveCanvas=()=>editLayerCanvases.current[editActiveLayer]||null;
 
@@ -1123,6 +1177,17 @@ const doWandSelect=(px,py)=>{
     for(let i=0;i<w*h;i++){if(match(i*4))mask[i]=1}
   }
   sEditSel(mask);
+  // Build cached Path2D from mask for clip()
+  const path=new Path2D();
+  for(let y=0;y<h;y++){
+    let rs=-1;
+    for(let x=0;x<=w;x++){
+      const sel=x<w&&mask[y*w+x];
+      if(sel&&rs<0)rs=x;
+      if(!sel&&rs>=0){path.rect(rs,y,x-rs,1);rs=-1;}
+    }
+  }
+  editSelPath.current=path;
 };
 
 // Fill selection with current color
@@ -1234,6 +1299,8 @@ const editDoDraw=(e)=>{
 
   if(editTool==="blur"){
     const ctx=acv.getContext("2d");
+    const sp=editSelPath.current;
+    if(sp){ctx.save();ctx.clip(sp)}
     const r=Math.max(2,Math.floor(editBrush/2));
     const sr=Math.max(1,Math.floor(editBlurStr));
     const tmp=document.createElement("canvas");tmp.width=se.width;tmp.height=se.height;
@@ -1242,12 +1309,13 @@ const editDoDraw=(e)=>{
     editLayers.forEach(l=>{if(l.visible){const lcv=editLayerCanvases.current[l.id];if(lcv)tctx.drawImage(lcv,0,0)}});
     const ix=Math.max(0,Math.round(x)-r),iy=Math.max(0,Math.round(y)-r);
     const iw=Math.min(r*2,se.width-ix),ih=Math.min(r*2,se.height-iy);
-    if(iw<=0||ih<=0)return;
+    if(iw<=0||ih<=0){if(sp)ctx.restore();return}
     const sm=document.createElement("canvas");sm.width=Math.max(1,Math.round(iw/sr));sm.height=Math.max(1,Math.round(ih/sr));
     sm.getContext("2d").drawImage(tmp,ix,iy,iw,ih,0,0,sm.width,sm.height);
     ctx.globalCompositeOperation="source-over";ctx.globalAlpha=0.7;
     ctx.drawImage(sm,0,0,sm.width,sm.height,ix,iy,iw,ih);
     ctx.globalAlpha=1;
+    if(sp)ctx.restore();
   }else{
     // All other tools: draw to stroke canvas for uniform opacity
     if(!editStrokeCanvas.current){
@@ -1258,10 +1326,13 @@ const editDoDraw=(e)=>{
     if(editTool==="eraser"){
       // Eraser draws directly to layer
       const ctx=acv.getContext("2d");
+      const sp=editSelPath.current;
+      if(sp){ctx.save();ctx.clip(sp)}
       ctx.globalCompositeOperation="destination-out";ctx.globalAlpha=1;
       ctx.lineWidth=editBrush;ctx.lineCap="round";ctx.lineJoin="round";
       if(editLastPos.current){ctx.beginPath();ctx.moveTo(editLastPos.current.x,editLastPos.current.y);ctx.lineTo(x,y);ctx.stroke()}
       else{ctx.beginPath();ctx.arc(x,y,editBrush/2,0,Math.PI*2);ctx.fill()}
+      if(sp)ctx.restore();
     }else if(editTool==="bgremove"){
       sctx.globalCompositeOperation="source-over";sctx.globalAlpha=1;
       sctx.strokeStyle="#00ff88";sctx.fillStyle="#00ff88";
@@ -1270,11 +1341,14 @@ const editDoDraw=(e)=>{
       else{sctx.beginPath();sctx.arc(x,y,editBrush/2,0,Math.PI*2);sctx.fill()}
     }else{
       // Brush: draw at full opacity to stroke canvas
+      const sp=editSelPath.current;
+      if(sp){sctx.save();sctx.clip(sp)}
       sctx.globalCompositeOperation="source-over";sctx.globalAlpha=1;
       sctx.strokeStyle=editColor;sctx.fillStyle=editColor;
       sctx.lineWidth=editBrush;sctx.lineCap="round";sctx.lineJoin="round";
       if(editLastPos.current){sctx.beginPath();sctx.moveTo(editLastPos.current.x,editLastPos.current.y);sctx.lineTo(x,y);sctx.stroke()}
       else{sctx.beginPath();sctx.arc(x,y,editBrush/2,0,Math.PI*2);sctx.fill()}
+      if(sp)sctx.restore();
     }
   }
   editLastPos.current={x,y};
@@ -1305,7 +1379,7 @@ const editStopDraw=()=>{
 const editClear=()=>{
   const acv=getActiveCanvas();if(acv)acv.getContext("2d").clearRect(0,0,acv.width,acv.height);
   if(editStrokeCanvas.current)editStrokeCanvas.current.getContext("2d").clearRect(0,0,editStrokeCanvas.current.width,editStrokeCanvas.current.height);
-  editHistoryRef.current=[];compositeEdit();
+  editHistoryRef.current=[];sEditSel(null);editSelPath.current=null;compositeEdit();
 };
 const editUndo=()=>{
   const h=editHistoryRef.current;if(h.length===0)return;
@@ -1426,7 +1500,7 @@ const editApply=()=>{
   editLayers.forEach(l=>{if(l.visible){const lcv=editLayerCanvases.current[l.id];if(lcv)ctx.drawImage(lcv,0,0)}});
   out.toBlob(blob=>{
     const url=URL.createObjectURL(blob);
-    sBaseImg(url);sMode("img2img");sEditMode(false);sEditSrc(null);
+    sBaseImg(url);sMode("img2img");sEditMode(false);sEditSrc(null);sEditSel(null);editSelPath.current=null;
     tw("편집 적용 → Base Image 설정됨");
   },"image/png");
 };
@@ -1439,7 +1513,7 @@ const editApplyToGen=()=>{
   editLayers.forEach(l=>{if(l.visible){const lcv=editLayerCanvases.current[l.id];if(lcv)ctx.drawImage(lcv,0,0)}});
   out.toBlob(blob=>{
     const url=URL.createObjectURL(blob);
-    sGenImg(url);sEditMode(false);sEditSrc(null);
+    sGenImg(url);sEditMode(false);sEditSrc(null);sEditSel(null);editSelPath.current=null;
     tw("편집 적용 → 미리보기 설정됨");
   },"image/png");
 };
@@ -2004,6 +2078,17 @@ return(
 <input type="range" min={2} max={10} value={editBlurStr} onChange={e=>sEditBlurStr(+e.target.value)} style={{width:60}}/>
 <span style={{fontSize:9,color:"#aaa",fontFamily:"monospace",minWidth:12}}>{editBlurStr}</span>
 </React.Fragment>}
+{editTool==="wand"&&<React.Fragment>
+<span style={{fontSize:9,color:"#888"}}>허용</span>
+<input type="range" min={0} max={255} value={wandTol} onChange={e=>sWandTol(+e.target.value)} style={{width:70}}/>
+<span style={{fontSize:9,color:"#aaa",fontFamily:"monospace",minWidth:18}}>{wandTol}</span>
+<button onClick={()=>sWandContig(p=>!p)} style={{...Z.hB,fontSize:9,padding:"4px 8px",minHeight:32,
+  background:wandContig?"rgba(90,180,255,.15)":"rgba(255,180,60,.15)",
+  borderColor:wandContig?"rgba(90,180,255,.3)":"rgba(255,180,60,.3)",
+  color:wandContig?"#5cb8ff":"#fa5"}}>{wandContig?"인접":"전체"}</button>
+<button onClick={fillSelection} style={{...Z.hB,fontSize:11,padding:"4px 10px",minHeight:32,color:"#8d8",borderColor:"rgba(100,200,100,.3)"}} title="선택 영역 채우기">🪣</button>
+<button onClick={()=>{sEditSel(null);editSelPath.current=null}} style={{...Z.hB,fontSize:9,padding:"4px 8px",minHeight:32,color:"#f88",borderColor:"rgba(255,100,100,.3)"}} title="선택 해제">{editSel?"✕ 해제":"—"}</button>
+</React.Fragment>}
 <div style={{width:1,height:20,background:"rgba(255,255,255,.08)"}}/>
 <button onClick={editUndo} style={{...Z.hB,fontSize:12,padding:"6px 12px",minHeight:44}} title="Ctrl+Z">↩</button>
 <button onClick={editClear} style={{...Z.hB,fontSize:12,padding:"6px 12px",minHeight:44,color:"#f66"}}>✕ 초기화</button>
@@ -2016,7 +2101,7 @@ return(
 <div style={{flex:1}}/>
 <button onClick={editApply} className="gen-btn" style={{fontSize:12,padding:"6px 14px",minHeight:44,background:"linear-gradient(135deg,#3388ff,#5cb8ff)"}}>✅ → Base</button>
 <button onClick={editApplyToGen} style={{...Z.hB,fontSize:12,padding:"6px 14px",minHeight:44,color:"#b095ff",borderColor:"rgba(120,90,255,.4)",background:"rgba(120,90,255,.12)"}}>→ 미리보기</button>
-<button onClick={()=>{sEditMode(false);sEditSrc(null)}} style={{...Z.hB,fontSize:14,padding:"6px 12px",minHeight:44,color:"#f66"}}>✕</button>
+<button onClick={()=>{sEditMode(false);sEditSrc(null);sEditSel(null);editSelPath.current=null}} style={{...Z.hB,fontSize:14,padding:"6px 12px",minHeight:44,color:"#f66"}}>✕</button>
 </div>}
 
 {/* Top Bar - BG Remove Mode (options + actions) */}
@@ -2060,19 +2145,56 @@ return(
   a.download="NAI_bgremoved_"+Date.now()+"."+ext;a.click();
   tw(ext==="webp"?"WebP 내보내기 완료":"PNG 내보내기 (WebP 미지원)");
 }} style={{...Z.hB,fontSize:11,padding:"5px 12px",minHeight:44,color:"#5cb8ff"}}>💾 WebP</button>
-<button onClick={()=>{sEditMode(false);sEditSrc(null)}} style={{...Z.hB,fontSize:14,padding:"6px 12px",minHeight:44,color:"#f66"}}>✕</button>
+<button onClick={()=>{sEditMode(false);sEditSrc(null);sEditSel(null);editSelPath.current=null}} style={{...Z.hB,fontSize:14,padding:"6px 12px",minHeight:44,color:"#f66"}}>✕</button>
 </div>}
 {/* Main area: canvas + layers panel */}
 <div style={{flex:1,display:"flex",overflow:"hidden",minHeight:0}}>
 {/* Color Wheel */}
 {editMode==="edit"&&showCW&&<React.Fragment><div style={{position:"fixed",inset:0,zIndex:10000}} onClick={()=>sShowCW(false)}/><ColorWheel color={editColor} onChange={c=>sEditColor(c)} onClose={()=>sShowCW(false)}/></React.Fragment>}
+{/* Shortcut capture modal */}
+{shortcutModal&&<React.Fragment>
+<div style={{position:"fixed",inset:0,zIndex:10001,background:"rgba(0,0,0,.6)"}} onClick={()=>sShortcutModal(null)}/>
+<div style={{position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",zIndex:10002,background:"#1e1a32",border:"1px solid rgba(90,180,255,.3)",borderRadius:12,padding:"20px 28px",textAlign:"center",minWidth:220,boxShadow:"0 8px 30px rgba(0,0,0,.6)"}}
+  tabIndex={0} autoFocus
+  ref={el=>{if(el)el.focus()}}
+  onKeyDown={e=>{
+    e.preventDefault();e.stopPropagation();
+    if(e.key==="Escape"){sShortcutModal(null);return}
+    if(e.key==="Backspace"||e.key==="Delete"){
+      sEditShortcuts(p=>{const n={...p};delete n[shortcutModal];return n});
+      sShortcutModal(null);tw("단축키 해제됨");return;
+    }
+    if(e.key.length===1){
+      // Check if already used by another tool
+      const key=e.key.toLowerCase();
+      const conflict=Object.entries(editShortcuts).find(([t,k])=>k.toLowerCase()===key&&t!==shortcutModal);
+      if(conflict){tw("⚠ '"+key.toUpperCase()+"' → "+editToolNames[conflict[0]]+"에서 사용 중");return}
+      sEditShortcuts(p=>({...p,[shortcutModal]:key}));
+      sShortcutModal(null);tw("단축키 설정: "+key.toUpperCase());
+    }
+  }}>
+<div style={{fontSize:14,fontWeight:700,color:"#5cb8ff",marginBottom:8}}>{editToolNames[shortcutModal]} 단축키</div>
+<div style={{fontSize:22,marginBottom:10}}>{editShortcuts[shortcutModal]?editShortcuts[shortcutModal].toUpperCase():"—"}</div>
+<div style={{fontSize:11,color:"#aaa",marginBottom:6}}>키를 누르세요</div>
+<div style={{fontSize:9,color:"#666"}}>ESC 취소 · DEL 해제</div>
+</div>
+</React.Fragment>}
 {/* Left Sidebar - Edit Tools + Colors */}
-{editMode==="edit"&&<div style={{width:56,background:"rgba(15,12,30,.95)",borderRight:"1px solid rgba(90,180,255,.1)",display:"flex",flexDirection:"column",alignItems:"center",gap:4,padding:"8px 4px",flexShrink:0,overflowY:"auto"}}>
-{[["brush","🖌"],["eraser","🧹"],["eyedropper","💧"],["blur","🌫"]].map(([t,icon])=>
-<button key={t} onClick={()=>sEditTool(t)} style={{...Z.hB,fontSize:15,width:44,height:44,display:"flex",alignItems:"center",justifyContent:"center",
+{editMode==="edit"&&<div style={{width:62,background:"rgba(15,12,30,.95)",borderRight:"1px solid rgba(90,180,255,.1)",display:"flex",flexDirection:"column",alignItems:"center",gap:2,padding:"6px 2px",flexShrink:0,overflowY:"auto"}}>
+{[["brush","🖌"],["eraser","🧹"],["eyedropper","💧"],["blur","🌫"],["wand","🪄"]].map(([t,icon])=>
+<button key={t} onClick={()=>sEditTool(t)}
+  onContextMenu={e=>{e.preventDefault();sShortcutModal(t)}}
+  onTouchStart={e=>{longPressTimer.current=setTimeout(()=>{e.preventDefault();sShortcutModal(t)},500)}}
+  onTouchEnd={()=>{clearTimeout(longPressTimer.current)}}
+  onTouchMove={()=>{clearTimeout(longPressTimer.current)}}
+  style={{...Z.hB,fontSize:13,width:54,height:54,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:1,padding:2,position:"relative",
   background:editTool===t?"rgba(90,180,255,.25)":"transparent",
   borderColor:editTool===t?"rgba(90,180,255,.4)":"rgba(255,255,255,.1)",
-  color:editTool===t?"#5cb8ff":"#888"}}>{icon}</button>)}
+  color:editTool===t?"#5cb8ff":"#888"}}>
+  <span style={{fontSize:15,lineHeight:1}}>{icon}</span>
+  <span style={{fontSize:7,lineHeight:1,opacity:.8}}>{editToolNames[t]}</span>
+  {editShortcuts[t]&&<span style={{position:"absolute",top:1,right:1,fontSize:7,background:"rgba(90,180,255,.35)",color:"#cde",borderRadius:2,padding:"0 2px",lineHeight:"11px",fontFamily:"monospace"}}>{editShortcuts[t].toUpperCase()}</span>}
+</button>)}
 <div style={{width:32,height:1,background:"rgba(255,255,255,.08)",margin:"2px 0"}}/>
 <div onClick={()=>sShowCW(true)} style={{width:36,height:36,borderRadius:6,background:editColor,cursor:"pointer",border:"2px solid rgba(255,255,255,.3)",flexShrink:0}} title="색상환 열기"/>
 <div style={{display:"flex",flexWrap:"wrap",gap:2,justifyContent:"center",padding:"0 2px"}}>
@@ -2102,7 +2224,7 @@ return(
 backgroundImage:"repeating-conic-gradient(#333 0% 25%, #555 0% 50%)",backgroundSize:"16px 16px"}}>
 <img ref={editImgRef} src={editImg} style={{width:"100%",height:"100%",objectFit:"contain",display:"block",userSelect:"none",WebkitUserSelect:"none"}} draggable={false}/>
 <canvas ref={editCanvasRef} style={{position:"absolute",inset:0,width:"100%",height:"100%",
-  cursor:editTool==="eyedropper"?"crosshair":editTool==="blur"?"cell":editTool==="bgremove"?"crosshair":"default",touchAction:"none"}}
+  cursor:editTool==="eyedropper"?"crosshair":editTool==="blur"?"cell":editTool==="bgremove"?"crosshair":editTool==="wand"?"crosshair":"default",touchAction:"none"}}
   onMouseDown={editStartDraw}
   onContextMenu={e=>e.preventDefault()}
   onTouchStart={editTouchStart} onTouchMove={editTouchMove} onTouchEnd={editTouchEnd}/>
