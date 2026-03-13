@@ -202,7 +202,7 @@ const MO=[{v:"nai-diffusion-4-5-full",l:"V4.5 Full"},{v:"nai-diffusion-4-5-curat
 const SA=[{v:"k_euler",l:"Euler"},{v:"k_euler_ancestral",l:"Euler Ancestral"},{v:"k_dpmpp_2s_ancestral",l:"DPM++ 2S Ancestral"},{v:"k_dpmpp_2m",l:"DPM++ 2M"},{v:"k_dpmpp_sde",l:"DPM++ SDE"},{v:"ddim_v3",l:"DDIM"}];
 const RE=[{w:832,h:1216,l:"832×1216 세로"},{w:1216,h:832,l:"1216×832 가로"},{w:1024,h:1024,l:"1024×1024"},{w:1024,h:1536,l:"1024×1536 세로大"},{w:1536,h:1024,l:"1536×1024 가로大"},{w:640,h:640,l:"640×640 소"}];
 
-function DD(){return{baseCols:[{id:G(),name:"베이스"}],baseChks:[],chars:[],activeIds:[],collapsed:{},settings:{...DS}}}
+function DD(){return{baseCols:[{id:G(),name:"베이스"}],baseChks:[],chars:[],activeIds:[],vibeRefs:[],collapsed:{},settings:{...DS}}}
 
 async function exF(j,fn){if(FS){try{const h=await window.showSaveFilePicker({id:PK,suggestedName:fn+".json",types:[{description:"JSON",accept:{"application/json":[".json"]}}]});const w=await h.createWritable();await w.write(j);await w.close();return 1}catch(e){if(e.name==="AbortError")return 0}}const b=new Blob([j],{type:"application/json"});const u=URL.createObjectURL(b);Object.assign(document.createElement("a"),{href:u,download:fn+".json"}).click();URL.revokeObjectURL(u);return 1}
 async function imF(){if(FS){try{const[h]=await window.showOpenFilePicker({id:PK,types:[{description:"JSON",accept:{"application/json":[".json"]}}]});return JSON.parse(await(await h.getFile()).text())}catch{return null}}return new Promise(r=>{const i=Object.assign(document.createElement("input"),{type:"file",accept:".json"});i.onchange=async e=>{const f=e.target.files[0];if(!f)return r(null);try{r(JSON.parse(await f.text()))}catch{r(null)}};i.click()})}
@@ -647,21 +647,42 @@ return(<div ref={wrapRef} style={{position:"relative"}}>
 
 
 /* ─── ChunkItem ─── */
-function CI({c,i,t,onM,onE,onD,onT}){return(
-<div style={{background:c.enabled?"rgba(120,90,255,.1)":"rgba(255,255,255,.02)",border:`1px solid ${c.enabled?"rgba(120,90,255,.28)":"rgba(255,255,255,.06)"}`,borderRadius:8,padding:"10px 10px",marginBottom:6,opacity:c.enabled?1:.5,transition:"all .15s"}}>
+function CI({c,i,t,onM,onE,onD,onSG,onAO,onEO,onDO}){
+const selOpt=(c.options||[]).find(o=>o.id===c.selected);
+const active=!!c.selected;
+const[open,setOpen]=React.useState(false);
+return(
+<div style={{background:active?"rgba(90,60,200,.12)":"rgba(255,255,255,.02)",border:`1px solid ${active?"rgba(120,90,255,.28)":"rgba(255,255,255,.06)"}`,borderRadius:8,padding:"10px 10px",marginBottom:6,transition:"all .15s"}}>
 <div style={{display:"flex",alignItems:"center",gap:7}}>
 <div style={{display:"flex",flexDirection:"column",flexShrink:0,gap:2}}>
 <button onClick={()=>onM(c.id,-1)} disabled={i===0} style={{...Z.aV,opacity:i===0?.2:1}}>▲</button>
 <button onClick={()=>onM(c.id,1)} disabled={i===t-1} style={{...Z.aV,opacity:i===t-1?.2:1}}>▼</button></div>
-<div onClick={()=>onT(c.id)} style={{width:22,height:22,borderRadius:5,flexShrink:0,cursor:"pointer",background:c.enabled?"#785aff":"transparent",border:c.enabled?"none":"1.5px solid #555",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,color:"#fff"}}>{c.enabled?"✓":""}</div>
-<div style={{flex:1,minWidth:0,cursor:"pointer"}} onClick={()=>onT(c.id)}>
-<div style={{fontSize:13,fontWeight:600,color:c.enabled?"#c0b0ff":"#777",marginBottom:2}}>{c.label}</div>
-<div style={{fontSize:11,color:"#888",fontFamily:"'JetBrains Mono',monospace",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.text}</div></div>
+<div onClick={()=>setOpen(!open)} style={{flex:1,minWidth:0,cursor:"pointer",display:"flex",alignItems:"center",gap:6}}>
+<span style={{fontSize:10,color:"#a88cff",fontWeight:700,flexShrink:0,transition:"transform .15s",transform:open?"rotate(90deg)":"rotate(0)"}}>▶</span>
+<div>
+<div style={{fontSize:13,fontWeight:600,color:active?"#c0b0ff":"#777"}}>{c.label}</div>
+<div style={{fontSize:11,color:active?"#9d8aee":"#555",fontFamily:"'JetBrains Mono',monospace",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:160}}>{selOpt?selOpt.name:"(선택 없음)"}</div>
+</div></div>
 <button onClick={()=>onE(c)} style={Z.tB}>✎</button>
-<button onClick={()=>onD(c.id)} style={{...Z.tB,color:"#f55"}}>✕</button></div></div>)}
+<button onClick={()=>onD(c.id)} style={{...Z.tB,color:"#f55"}}>✕</button></div>
+{open&&<div style={{marginTop:8,borderTop:"1px solid rgba(255,255,255,.06)",paddingTop:8}}>
+{(c.options||[]).map(o=>(
+<div key={o.id} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 6px",borderRadius:6,cursor:"pointer",marginBottom:2,
+  background:c.selected===o.id?"rgba(120,90,255,.15)":"transparent"}} onClick={()=>onSG(c.id,c.selected===o.id?null:o.id)}>
+<div style={{width:18,height:18,borderRadius:9,border:c.selected===o.id?"none":"1.5px solid #555",background:c.selected===o.id?"#785aff":"transparent",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,color:"#fff",flexShrink:0}}>{c.selected===o.id?"●":""}</div>
+<div style={{flex:1,minWidth:0}}>
+<div style={{fontSize:12,fontWeight:500,color:c.selected===o.id?"#c0b0ff":"#888"}}>{o.name}</div>
+<div style={{fontSize:10,color:"#555",fontFamily:"'JetBrains Mono',monospace",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{o.prompt}</div>
+</div>
+<button onClick={e=>{e.stopPropagation();onEO(c.id,o)}} style={{...Z.tB,fontSize:9}}>✎</button>
+<button onClick={e=>{e.stopPropagation();onDO(c.id,o.id)}} style={{...Z.tB,fontSize:9,color:"#f55"}}>✕</button>
+</div>))}
+<button onClick={()=>onAO(c.id)} style={{...Z.pB,width:"100%",height:30,fontSize:11,marginTop:4}}>+ 옵션 추가</button>
+</div>}
+</div>)}
 
 /* ─── ColPanel ─── */
-function CP({col,ci,tt,chks,lb,oMC,oRC,oDC,oAK,oEK,oDK,oTK,oMK}){
+function CP({col,ci,tt,chks,lb,oMC,oRC,oDC,oAG,oEK,oDK,oMK,oSG,oAO,oEO,oDO}){
 const p=chks.filter(x=>x.colId===col.id&&x.side==="pos").sort((a,b)=>a.order-b.order);
 const n=chks.filter(x=>x.colId===col.id&&x.side==="neg").sort((a,b)=>a.order-b.order);
 const isC=lb==="c";
@@ -676,14 +697,14 @@ return(<div className="col-panel" style={{minWidth:260,maxWidth:340,flex:"0 0 28
 <div style={{marginBottom:10}}>
 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
 <span style={{fontSize:11,fontWeight:700,color:"#785aff",letterSpacing:.5}}>POSITIVE</span>
-<button onClick={()=>oAK(col.id,"pos")} style={{...Z.pB,width:32,height:32}}>+</button></div>
-{p.map((x,i)=><CI key={x.id} c={x} i={i} t={p.length} onM={oMK} onE={oEK} onD={oDK} onT={oTK}/>)}
+<button onClick={()=>oAG(col.id,"pos")} style={{...Z.pB,width:32,height:32}}>+</button></div>
+{p.map((x,i)=><CI key={x.id} c={x} i={i} t={p.length} onM={oMK} onE={oEK} onD={oDK} onSG={oSG} onAO={oAO} onEO={oEO} onDO={oDO}/>)}
 {p.length===0&&<div style={Z.eH}>+ 추가</div>}</div>
 <div>
 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
 <span style={{fontSize:11,fontWeight:700,color:"#f55",letterSpacing:.5}}>NEGATIVE</span>
-<button onClick={()=>oAK(col.id,"neg")} style={{...Z.pB,borderColor:"rgba(255,68,68,.3)",color:"#f88",width:32,height:32}}>+</button></div>
-{n.map((x,i)=><CI key={x.id} c={x} i={i} t={n.length} onM={oMK} onE={oEK} onD={oDK} onT={oTK}/>)}
+<button onClick={()=>oAG(col.id,"neg")} style={{...Z.pB,borderColor:"rgba(255,68,68,.3)",color:"#f88",width:32,height:32}}>+</button></div>
+{n.map((x,i)=><CI key={x.id} c={x} i={i} t={n.length} onM={oMK} onE={oEK} onD={oDK} onSG={oSG} onAO={oAO} onEO={oEO} onDO={oDO}/>)}
 {n.length===0&&<div style={Z.eH}>+ 추가</div>}</div></div></div>)}
 
 /* ─── OutBox ─── */
@@ -716,7 +737,6 @@ const[so,sSo]=useState(false);
 const[cp,sCp]=useState(null);
 const[st,sSt]=useState(false);
 const[ts,sTs]=useState(null);
-const[tp,sTp]=useState(null);
 const[genImg,sGenImg]=useState(null); // generated image URL
 const[genLoading,sGenLoading]=useState(false);
 const[genError,sGenError]=useState(null);
@@ -852,10 +872,11 @@ const editImgRef=useRef(null);
 const editHistoryRef=useRef([]);
 const editWrapRef=useRef(null);
 const editLayerCanvases=useRef({}); // {id: canvasElement} - actual canvas DOMs
-const lR=useRef(),tR=useRef(),cR=useRef(),nR=useRef(),fR=useRef();
+const lR=useRef(),tR=useRef(),cR=useRef(),nR=useRef();
 
-const{baseCols,baseChks,chars,activeIds:_aid,settings:se,collapsed}=D;
+const{baseCols,baseChks,chars,activeIds:_aid,vibeRefs:_vibeRefs,settings:se,collapsed}=D;
 const activeIds=_aid||[];
+const vibeRefs=_vibeRefs||[];
 const activeChars=chars.filter(c=>activeIds.includes(c.id));
 
 // Fix model if not in list (e.g. old localStorage)
@@ -869,6 +890,31 @@ useEffect(()=>{
   if(D.selId!=null||!Array.isArray(D.activeIds)){
     sD(p=>({...p,activeIds:p.selId?[p.selId]:(p.activeIds||[]),selId:undefined}));
   }
+  // Migrate old simple chunks → group format
+  const migrateChks=chks=>{
+    if(!chks||!chks.length)return chks;
+    let changed=false;
+    const out=chks.map(c=>{
+      if(c.options)return c; // already a group
+      if(c.text!=null){ // old simple chunk
+        changed=true;
+        const opt={id:G(),name:c.label||"기본",prompt:c.text||""};
+        return{id:c.id,colId:c.colId,side:c.side,label:c.label||"",options:[opt],selected:c.enabled?opt.id:null,order:c.order||0};
+      }
+      return c;
+    });
+    return changed?out:chks;
+  };
+  const mb=migrateChks(D.baseChks);
+  const mc=D.chars?.map(ch=>{const nc=migrateChks(ch.chks);return nc!==ch.chks?{...ch,chks:nc}:ch});
+  if(mb!==D.baseChks||(mc&&mc.some((ch,i)=>ch!==D.chars[i]))){
+    sD(p=>({...p,baseChks:migrateChks(p.baseChks),chars:(p.chars||[]).map(ch=>({...ch,chks:migrateChks(ch.chks)}))}));
+  }
+  // Migrate old char-level refs → base-level vibeRefs
+  const oldRefs=(D.chars||[]).flatMap(ch=>(ch.refs||[]));
+  if(oldRefs.length>0&&(!D.vibeRefs||D.vibeRefs.length===0)){
+    sD(p=>({...p,vibeRefs:oldRefs,chars:(p.chars||[]).map(ch=>({...ch,refs:[]}))}));
+  }
 },[]);
 
 useEffect(()=>{ls(LS,D)},[D]);
@@ -879,10 +925,15 @@ const tw=m=>{sTs(m);setTimeout(()=>sTs(null),2000)};
 const up=fn=>sD(p=>fn(p));
 
 /* ── Prompt building (base + per-character) ── */
-const buildBasePrompt=s=>{const r=[];baseCols.forEach(col=>{baseChks.filter(c=>c.colId===col.id&&c.side===s&&c.enabled).sort((a,b)=>a.order-b.order).forEach(c=>{if(c.text.trim())r.push(c.text.trim())})});return r.join(", ")};
-const buildCharPrompt=(ch,s)=>{const r=[];ch.cols.forEach(col=>{ch.chks.filter(c=>c.colId===col.id&&c.side===s&&c.enabled).sort((a,b)=>a.order-b.order).forEach(c=>{if(c.text.trim())r.push(c.text.trim())})});return r.join(", ")};
+const getChkPrompt=c=>{
+  if(!c.selected)return "";
+  return(c.options||[]).find(o=>o.id===c.selected)?.prompt?.trim()||"";
+};
+const isChkActive=c=>!!c.selected;
+const buildBasePrompt=s=>{const r=[];baseCols.forEach(col=>{baseChks.filter(c=>c.colId===col.id&&c.side===s&&isChkActive(c)).sort((a,b)=>a.order-b.order).forEach(c=>{const t=getChkPrompt(c);if(t)r.push(t)})});return r.join(", ")};
+const buildCharPrompt=(ch,s)=>{const r=[];ch.cols.forEach(col=>{ch.chks.filter(c=>c.colId===col.id&&c.side===s&&isChkActive(c)).sort((a,b)=>a.order-b.order).forEach(c=>{const t=getChkPrompt(c);if(t)r.push(t)})});return r.join(", ")};
 const pBase=buildBasePrompt("pos"),nBase=buildBasePrompt("neg");
-const charPrompts=activeChars.map(ch=>({name:ch.name,pos:buildCharPrompt(ch,"pos"),neg:buildCharPrompt(ch,"neg"),refs:ch.refs||[]}));
+const charPrompts=activeChars.map(ch=>({name:ch.name,pos:buildCharPrompt(ch,"pos"),neg:buildCharPrompt(ch,"neg")}));
 const pO=[pBase,...charPrompts.map(c=>c.pos)].filter(Boolean).join(", ");
 const nO=[nBase,...charPrompts.map(c=>c.neg)].filter(Boolean).join(", ");
 
@@ -907,7 +958,6 @@ const doGenerate=async()=>{
   if(mode==="inpaint"&&(!baseImg||!ipMaskB64)){tw("⚠ Base Image와 마스크가 필요합니다");return}
   sGenLoading(true);sGenError(null);
   try{
-    const vibeRefs=activeChars.flatMap(c=>c.refs||[]);
     let url;
     if(mode==="inpaint"&&baseImg&&ipMaskB64){
       // Get base image as b64
@@ -1808,18 +1858,17 @@ const toggleChar=id=>up(p=>{
   const ids=p.activeIds||[];
   return{...p,activeIds:ids.includes(id)?ids.filter(x=>x!==id):[...ids,id]};
 });
-const oAC=()=>{sTp(null);sCm({t:"a"})};
-const oEC=ch=>{sTp(ch.thumbnail||null);sCm({t:"e",c:ch})};
+const oAC=()=>{sCm({t:"a"})};
+const oEC=ch=>{sCm({t:"e",c:ch})};
 const svC=()=>{const nm=cR.current?.value.trim();if(!nm)return;const nt=nR.current?.value||"";
-if(cm.t==="a"){const id=G();up(p=>({...p,chars:[...p.chars,{id,name:nm,thumbnail:tp||"",refs:[],cols:[{id:G(),name:nm+" 기본"}],chks:[],notes:nt}]}))
-}else{const cid=cm.c.id;up(p=>({...p,chars:p.chars.map(c=>c.id===cid?{...c,name:nm,thumbnail:tp||c.thumbnail,notes:nt}:c)}))}sCm(null)};
+if(cm.t==="a"){const id=G();up(p=>({...p,chars:[...p.chars,{id,name:nm,cols:[{id:G(),name:nm+" 기본"}],chks:[],notes:nt}]}))
+}else{const cid=cm.c.id;up(p=>({...p,chars:p.chars.map(c=>c.id===cid?{...c,name:nm,notes:nt}:c)}))}sCm(null)};
 const dC=id=>{if(!confirm("삭제?"))return;up(p=>({...p,chars:p.chars.filter(c=>c.id!==id),activeIds:(p.activeIds||[]).filter(x=>x!==id)}))};
-const hTU=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=v=>sTp(v.target.result);r.readAsDataURL(f)};
 
-/* ── Ref images ── */
-const aRI=cid=>{const i=document.createElement("input");i.type="file";i.accept="image/*";i.onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=v=>{up(p=>({...p,chars:p.chars.map(c=>c.id===cid?{...c,refs:[...c.refs,{id:G(),d:v.target.result,s:.6,ie:1}]}:c)}))};r.readAsDataURL(f)};i.click()};
-const rRI=(cid,rid)=>up(p=>({...p,chars:p.chars.map(c=>c.id===cid?{...c,refs:c.refs.filter(r=>r.id!==rid)}:c)}));
-const uRI=(cid,rid,f,v)=>up(p=>({...p,chars:p.chars.map(c=>c.id===cid?{...c,refs:c.refs.map(r=>r.id===rid?{...r,[f]:v}:r)}:c)}));
+/* ── Vibe Transfer (base level) ── */
+const aVI=()=>{const i=document.createElement("input");i.type="file";i.accept="image/*";i.onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=v=>{up(p=>({...p,vibeRefs:[...(p.vibeRefs||[]),{id:G(),d:v.target.result,s:.6,ie:1}]}))};r.readAsDataURL(f)};i.click()};
+const rVI=rid=>up(p=>({...p,vibeRefs:(p.vibeRefs||[]).filter(r=>r.id!==rid)}));
+const uVI=(rid,f,v)=>up(p=>({...p,vibeRefs:(p.vibeRefs||[]).map(r=>r.id===rid?{...r,[f]:v}:r)}));
 
 /* ── Col/Chunk ops ── */
 const aC=tg=>sMo({t:"ac",tg});
@@ -1830,10 +1879,25 @@ const rC=(tg,col)=>sMo({t:"rc",tg,d:col});
 const dCC=(tg,id)=>up(p=>{
   if(tg==="b")return{...p,baseCols:p.baseCols.filter(c=>c.id!==id),baseChks:p.baseChks.filter(c=>c.colId!==id)};
   return{...p,chars:p.chars.map(ch=>ch.id!==tg?ch:{...ch,cols:ch.cols.filter(c=>c.id!==id),chks:ch.chks.filter(c=>c.colId!==id)})}});
-const aK=(tg,cid,si)=>sMo({t:"ak",tg,d:{cid,si}});
-const eK=(tg,ch)=>sMo({t:"ek",tg,d:ch});
+const aG=(tg,cid,si)=>sMo({t:"ag",tg,d:{cid,si}}); // add group chunk
+const eK=(tg,ch)=>sMo({t:"eg",tg,d:ch}); // edit group name
 const dK=(tg,id)=>up(p=>{if(tg==="b")return{...p,baseChks:p.baseChks.filter(c=>c.id!==id)};return{...p,chars:p.chars.map(ch=>ch.id!==tg?ch:{...ch,chks:ch.chks.filter(c=>c.id!==id)})}});
-const tK=(tg,id)=>up(p=>{if(tg==="b")return{...p,baseChks:p.baseChks.map(c=>c.id===id?{...c,enabled:!c.enabled}:c)};return{...p,chars:p.chars.map(ch=>ch.id!==tg?ch:{...ch,chks:ch.chks.map(c=>c.id===id?{...c,enabled:!c.enabled}:c)})}});
+// Group: select option (radio)
+const sG=(tg,chkId,optId)=>up(p=>{
+  const mapC=c=>c.id===chkId?{...c,selected:optId}:c;
+  if(tg==="b")return{...p,baseChks:p.baseChks.map(mapC)};
+  return{...p,chars:p.chars.map(ch=>ch.id!==tg?ch:{...ch,chks:ch.chks.map(mapC)})};
+});
+// Group: add option
+const aO=(tg,chkId)=>sMo({t:"ao",tg,d:{chkId}});
+// Group: edit option
+const eO=(tg,chkId,opt)=>sMo({t:"eo",tg,d:{chkId,opt}});
+// Group: delete option
+const dO=(tg,chkId,optId)=>up(p=>{
+  const mapC=c=>{if(c.id!==chkId)return c;const opts=(c.options||[]).filter(o=>o.id!==optId);return{...c,options:opts,selected:c.selected===optId?null:c.selected}};
+  if(tg==="b")return{...p,baseChks:p.baseChks.map(mapC)};
+  return{...p,chars:p.chars.map(ch=>ch.id!==tg?ch:{...ch,chks:ch.chks.map(mapC)})};
+});
 const mK=(tg,id,d)=>up(p=>{
   const chks=tg==="b"?p.baseChks:p.chars.find(c=>c.id===tg)?.chks||[];
   const ch=chks.find(c=>c.id===id);if(!ch)return p;
@@ -1847,8 +1911,14 @@ const mK=(tg,id,d)=>up(p=>{
 const hSv=()=>{if(!mo)return;const lb=lR.current?.value.trim();const tx=tR.current?.value.trim();const{t,tg,d}=mo;
 if(t==="ac"){if(!lb)return;up(p=>{if(tg==="b")return{...p,baseCols:[...p.baseCols,{id:G(),name:lb}]};return{...p,chars:p.chars.map(ch=>ch.id!==tg?ch:{...ch,cols:[...ch.cols,{id:G(),name:lb}]})}})}
 else if(t==="rc"){if(!lb)return;up(p=>{if(tg==="b")return{...p,baseCols:p.baseCols.map(c=>c.id===d.id?{...c,name:lb}:c)};return{...p,chars:p.chars.map(ch=>ch.id!==tg?ch:{...ch,cols:ch.cols.map(c=>c.id===d.id?{...c,name:lb}:c)})}})}
-else if(t==="ak"){if(!lb||!tx)return;up(p=>{const chks=tg==="b"?p.baseChks:p.chars.find(c=>c.id===tg)?.chks||[];const gr=chks.filter(c=>c.colId===d.cid&&c.side===d.si);const mx=gr.length>0?Math.max(...gr.map(c=>c.order))+1:0;const nk={id:G(),colId:d.cid,side:d.si,label:lb,text:tx,enabled:true,order:mx};if(tg==="b")return{...p,baseChks:[...p.baseChks,nk]};return{...p,chars:p.chars.map(ch=>ch.id!==tg?ch:{...ch,chks:[...ch.chks,nk]})}})}
-else if(t==="ek"){if(!lb||!tx)return;up(p=>{if(tg==="b")return{...p,baseChks:p.baseChks.map(c=>c.id===d.id?{...c,label:lb,text:tx}:c)};return{...p,chars:p.chars.map(ch=>ch.id!==tg?ch:{...ch,chks:ch.chks.map(c=>c.id===d.id?{...c,label:lb,text:tx}:c)})}})}
+// Add group chunk
+else if(t==="ag"){if(!lb)return;up(p=>{const chks=tg==="b"?p.baseChks:p.chars.find(c=>c.id===tg)?.chks||[];const gr=chks.filter(c=>c.colId===d.cid&&c.side===d.si);const mx=gr.length>0?Math.max(...gr.map(c=>c.order))+1:0;const nk={id:G(),colId:d.cid,side:d.si,label:lb,options:[],selected:null,order:mx};if(tg==="b")return{...p,baseChks:[...p.baseChks,nk]};return{...p,chars:p.chars.map(ch=>ch.id!==tg?ch:{...ch,chks:[...ch.chks,nk]})}})}
+// Edit group chunk name
+else if(t==="eg"){if(!lb)return;up(p=>{const mapC=c=>c.id===d.id?{...c,label:lb}:c;if(tg==="b")return{...p,baseChks:p.baseChks.map(mapC)};return{...p,chars:p.chars.map(ch=>ch.id!==tg?ch:{...ch,chks:ch.chks.map(mapC)})}})}
+// Add option to group
+else if(t==="ao"){if(!lb||!tx)return;up(p=>{const mapC=c=>c.id===d.chkId?{...c,options:[...(c.options||[]),{id:G(),name:lb,prompt:tx}]}:c;if(tg==="b")return{...p,baseChks:p.baseChks.map(mapC)};return{...p,chars:p.chars.map(ch=>ch.id!==tg?ch:{...ch,chks:ch.chks.map(mapC)})}})}
+// Edit option
+else if(t==="eo"){if(!lb||!tx)return;up(p=>{const mapC=c=>c.id===d.chkId?{...c,options:(c.options||[]).map(o=>o.id===d.opt.id?{...o,name:lb,prompt:tx}:o)}:c;if(tg==="b")return{...p,baseChks:p.baseChks.map(mapC)};return{...p,chars:p.chars.map(ch=>ch.id!==tg?ch:{...ch,chks:ch.chks.map(mapC)})}})}
 sMo(null)};
 
 /* ── Output helpers ── */
@@ -1856,10 +1926,11 @@ const cy=async(t,w)=>{try{await navigator.clipboard.writeText(t);sCp(w);setTimeo
 const hEx=async()=>{if(await exF(JSON.stringify(D,null,2),se.defaultFilename||"nai-pb"))tw("내보내기 완료!")};
 const hIm=async()=>{const d=await imF();if(!d)return;if(d.baseCols)sD(d);tw("가져오기 완료!")};
 
-const isTx=mo?.t==="ak"||mo?.t==="ek";
-const mTi={ac:"열 추가",rc:"열 이름 변경",ak:"청크 추가",ek:"청크 수정"}[mo?.t]||"";
-const dLb=mo?.t==="rc"?mo.d.name:mo?.t==="ek"?mo.d.label:"";
-const dTx=mo?.t==="ek"?mo.d.text:"";
+const isTx=mo?.t==="ao"||mo?.t==="eo";
+const isLbOnly=mo?.t==="ag"||mo?.t==="eg"||mo?.t==="ac"||mo?.t==="rc";
+const mTi={ac:"열 추가",rc:"열 이름 변경",ag:"그룹 추가",eg:"그룹 이름 변경",ao:"옵션 추가",eo:"옵션 수정"}[mo?.t]||"";
+const dLb=mo?.t==="rc"?mo.d.name:mo?.t==="eg"?mo.d.label:mo?.t==="ag"?"":mo?.t==="eo"?mo.d.opt.name:"";
+const dTx=mo?.t==="eo"?mo.d.opt.prompt:"";
 
 return(
 <div style={{height:"100dvh",display:"flex",flexDirection:"column"}}>
@@ -1906,10 +1977,10 @@ return(
 <div className="scroll-y" style={{flex:1,padding:"0 8px 8px"}}>
 {chars.map(ch=>(
 <div key={ch.id} className={`cc${activeIds.includes(ch.id)?" on":""}`} onClick={()=>toggleChar(ch.id)}>
-<div className="ct">{ch.thumbnail?<img src={ch.thumbnail}/>:<span>👤</span>}</div>
+<div className="ct"><span>👤</span></div>
 <div style={{flex:1,minWidth:0}}>
 <div style={{fontSize:13,fontWeight:600,color:activeIds.includes(ch.id)?"#ffb080":"#bbb",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ch.name}</div>
-<div style={{fontSize:10,color:"#666"}}>{ch.chks.filter(c=>c.enabled).length}청크 · {ch.refs.length}바이브</div></div>
+<div style={{fontSize:10,color:"#666"}}>{ch.chks.filter(c=>isChkActive(c)).length}청크</div></div>
 <div style={{display:"flex",flexDirection:"column",gap:3}} onClick={e=>e.stopPropagation()}>
 <button onClick={()=>oEC(ch)} style={{...Z.tB,width:32,height:32,fontSize:12,borderRadius:6}}>✎</button>
 <button onClick={()=>dC(ch.id)} style={{...Z.tB,width:32,height:32,fontSize:12,color:"#f55",borderRadius:6}}>✕</button></div></div>))}
@@ -1917,59 +1988,86 @@ return(
 
 <Rz panel="sidebar"/>
 
-{/* BASE IMAGE PANEL - appears in img2img/inpaint mode */}
-{mode!=="txt2img"&&baseImg&&(()=>{
+{/* BASE IMAGE + VIBE TRANSFER PANEL */}
+{(baseImg||vibeRefs.length>0)&&(()=>{
   const ratio=se.width/se.height;
+  const hasBase=mode!=="txt2img"&&baseImg;
+  const hasVibe=vibeRefs.length>0;
   return(
-<div style={{width:pw.base,minWidth:140,borderRight:"none",display:"flex",flexDirection:"column",flexShrink:0,background:"rgba(120,90,255,.03)"}}>
+<div style={{width:pw.base,minWidth:140,display:"flex",flexDirection:"column",flexShrink:0,background:"rgba(120,90,255,.03)"}}>
+
+{/* Base Image section */}
+{hasBase&&<React.Fragment>
 <div style={{padding:"8px 10px",borderBottom:"1px solid rgba(120,90,255,.1)",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
 <span style={{fontSize:11,fontWeight:700,color:"#b095ff"}}>🖼 Base Image</span>
 <div style={{display:"flex",gap:4}}>
 <button onClick={uploadBaseImg} style={{...Z.tB,width:22,height:22,fontSize:10,color:"#b095ff"}} title="다른 이미지 로드">📁</button>
 <button onClick={()=>{sMode("txt2img");sBaseImg(null);tw("txt2img 모드")}} style={{...Z.tB,width:22,height:22,fontSize:10,color:"#f55"}}>✕</button>
-</div>
-</div>
-{/* Base image preview */}
-<div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",padding:6,minHeight:0}}>
+</div></div>
+<div style={{flex:hasVibe?0:1,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",padding:6,minHeight:hasVibe?100:0}}>
 <div style={{height:"100%",aspectRatio:String(ratio),maxWidth:"100%",position:"relative",flexShrink:0}}>
 <img src={baseImg} style={{width:"100%",height:"100%",objectFit:"contain",display:"block",borderRadius:4,opacity:.85}}/>
 {mode==="inpaint"&&ipMaskUrl&&<img src={ipMaskUrl} style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"contain",borderRadius:4,pointerEvents:"none"}}/>}
 <div style={{position:"absolute",top:4,left:4,fontSize:8,padding:"1px 6px",borderRadius:3,background:"rgba(120,90,255,.6)",color:"#fff",fontWeight:700}}>SOURCE</div>
-</div>
-</div>
-{/* Controls */}
+</div></div>
 <div style={{padding:"8px 10px",borderTop:"1px solid rgba(120,90,255,.1)",flexShrink:0}}>
 {mode==="img2img"&&<React.Fragment>
 <div style={{display:"flex",alignItems:"center",gap:4,marginBottom:4}}>
 <span style={{fontSize:10,color:"#888",minWidth:32}}>강도</span>
 <input type="range" min={0} max={1} step={0.05} value={i2iStrength} onChange={e=>sI2iStr(+e.target.value)} style={{flex:1}}/>
-<span style={{fontSize:10,color:"#b095ff",fontFamily:"monospace",minWidth:26,textAlign:"right"}}>{i2iStrength}</span>
-</div>
+<span style={{fontSize:10,color:"#b095ff",fontFamily:"monospace",minWidth:26,textAlign:"right"}}>{i2iStrength}</span></div>
 <div style={{display:"flex",alignItems:"center",gap:4}}>
 <span style={{fontSize:10,color:"#888",minWidth:32}}>노이즈</span>
 <input type="range" min={0} max={1} step={0.05} value={i2iNoise} onChange={e=>sI2iNoise(+e.target.value)} style={{flex:1}}/>
-<span style={{fontSize:10,color:"#b095ff",fontFamily:"monospace",minWidth:26,textAlign:"right"}}>{i2iNoise}</span>
-</div>
-<div style={{marginTop:6,fontSize:9,color:"#666"}}>이 이미지를 기반으로 재생성합니다</div>
+<span style={{fontSize:10,color:"#b095ff",fontFamily:"monospace",minWidth:26,textAlign:"right"}}>{i2iNoise}</span></div>
 </React.Fragment>}
 {mode==="inpaint"&&<React.Fragment>
 <div style={{display:"flex",alignItems:"center",gap:4,marginBottom:6}}>
 <span style={{fontSize:10,color:"#888",minWidth:32}}>강도</span>
 <input type="range" min={0} max={1} step={0.05} value={ipStrength} onChange={e=>sIPS(+e.target.value)} style={{flex:1}}/>
-<span style={{fontSize:10,color:"#fa5",fontFamily:"monospace",minWidth:26,textAlign:"right"}}>{ipStrength}</span>
-</div>
+<span style={{fontSize:10,color:"#fa5",fontFamily:"monospace",minWidth:26,textAlign:"right"}}>{ipStrength}</span></div>
 {ipMaskUrl?<div style={{display:"flex",gap:4}}>
 <button onClick={()=>sIPE(true)} style={{...Z.hB,fontSize:10,padding:"4px 10px",color:"#c8b8ff",flex:1}}>✏️ 마스크 수정</button>
-<button onClick={()=>{sIPMaskUrl(null);sIPMaskB64(null)}} style={{...Z.hB,fontSize:10,padding:"4px 10px",color:"#f55"}}>✕</button>
-</div>
+<button onClick={()=>{sIPMaskUrl(null);sIPMaskB64(null)}} style={{...Z.hB,fontSize:10,padding:"4px 10px",color:"#f55"}}>✕</button></div>
 :<button onClick={()=>sIPE(true)} style={{...Z.hB,fontSize:10,padding:"4px 10px",color:"#fa5",width:"100%"}}>🖌 마스크 칠하기</button>}
-<div style={{marginTop:6,fontSize:9,color:"#666"}}>{ipMaskUrl?"마스크 적용됨 — 생성 버튼을 누르세요":"마스크를 먼저 칠해주세요"}</div>
 </React.Fragment>}
+</div>
+</React.Fragment>}
+
+{/* Divider between sections */}
+{hasBase&&hasVibe&&<div style={{height:1,background:"rgba(255,140,60,.15)",flexShrink:0}}/>}
+
+{/* Vibe Transfer section */}
+<div style={{padding:"8px 10px",borderTop:hasBase?"none":"none",display:"flex",alignItems:"center",justifyContent:"space-between",borderBottom:"1px solid rgba(255,140,60,.1)"}}>
+<span style={{fontSize:11,fontWeight:700,color:"#fa5"}}>🎨 Vibe Transfer</span>
+<button onClick={aVI} style={{...Z.pB,width:26,height:26,fontSize:12,color:"#fa5",borderColor:"rgba(255,140,60,.3)"}}>+</button>
+</div>
+<div style={{flex:hasBase?0:1,overflow:"auto",padding:6}}>
+{vibeRefs.length===0&&<div style={{fontSize:10,color:"#555",textAlign:"center",padding:10}}>이미지를 추가하면<br/>스타일이 참조됩니다</div>}
+{vibeRefs.map(r=>(
+<div key={r.id} style={{marginBottom:8,background:"rgba(255,140,60,.04)",border:"1px solid rgba(255,140,60,.1)",borderRadius:8,padding:8}}>
+<div style={{display:"flex",gap:8,alignItems:"flex-start"}}>
+<div style={{position:"relative",flexShrink:0}}>
+<img src={r.d} style={{width:56,height:56,borderRadius:6,objectFit:"cover",border:"1px solid rgba(255,140,60,.2)"}}/>
+<button onClick={()=>rVI(r.id)} style={{position:"absolute",top:-4,right:-4,background:"#f44",border:"none",borderRadius:"50%",width:16,height:16,color:"#fff",fontSize:8,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
+</div>
+<div style={{flex:1,minWidth:0}}>
+<div style={{display:"flex",alignItems:"center",gap:4,marginBottom:4}}>
+<span style={{fontSize:9,color:"#888",minWidth:50}}>Strength</span>
+<input type="range" min={0} max={1} step={0.05} value={r.s} onChange={e=>uVI(r.id,"s",+e.target.value)} style={{flex:1}}/>
+<span style={{fontSize:9,color:"#fa5",fontFamily:"monospace",minWidth:24,textAlign:"right"}}>{r.s}</span>
+</div>
+<div style={{display:"flex",alignItems:"center",gap:4}}>
+<span style={{fontSize:9,color:"#888",minWidth:50}}>Info Ext.</span>
+<input type="range" min={0} max={1} step={0.05} value={r.ie} onChange={e=>uVI(r.id,"ie",+e.target.value)} style={{flex:1}}/>
+<span style={{fontSize:9,color:"#fa5",fontFamily:"monospace",minWidth:24,textAlign:"right"}}>{r.ie}</span>
+</div>
+</div></div></div>))}
 </div>
 </div>);
 })()}
 
-{mode!=="txt2img"&&baseImg&&<Rz panel="base"/>}
+{(baseImg||vibeRefs.length>0)&&<Rz panel="base"/>}
 
 {/* MIDDLE - Preview + Actions + Generate */}
 {(()=>{
@@ -2014,7 +2112,7 @@ return(
 {genError&&<div style={{fontSize:10,color:"#f66",marginBottom:4}}>{genError.slice(0,100)}</div>}
 <div style={{display:"flex",gap:4,alignItems:"center",flexWrap:"wrap"}}>
 {(()=>{
-  const est=estimateAnlas(se,se.tier>=3,activeChars.flatMap(c=>c.refs||[]).length,mode==="img2img"?"img2img":"generate");
+  const est=estimateAnlas(se,se.tier>=3,vibeRefs.length,mode==="img2img"?"img2img":"generate");
   return <span style={{fontSize:10,padding:"3px 8px",borderRadius:5,fontWeight:600,
     background:est.free?"rgba(80,200,100,.12)":"rgba(255,180,60,.12)",
     color:est.free?"#5c5":"#da5"
@@ -2022,16 +2120,6 @@ return(
 })()}
 <span style={{fontSize:9,color:"#555"}}>{se.width}×{se.height} · {se.steps}st</span>
 </div>
-{/* Vibe Transfer */}
-{activeChars.some(c=>c.refs.length>0)&&<div style={{marginTop:6,display:"flex",gap:4,flexWrap:"wrap",alignItems:"center"}}>
-<span style={{fontSize:9,fontWeight:700,color:"#c90"}}>VIBE</span>
-{activeChars.map(ch=>ch.refs.map(r=>(
-<div key={r.id} style={{position:"relative"}}>
-<img src={r.d} style={{width:28,height:28,borderRadius:4,objectFit:"cover",border:"1px solid rgba(255,140,60,.3)"}} title={ch.name+" s:"+r.s+" ie:"+r.ie}/>
-<button onClick={()=>rRI(ch.id,r.id)} style={{position:"absolute",top:-4,right:-4,background:"#f44",border:"none",borderRadius:"50%",width:14,height:14,color:"#fff",fontSize:8,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
-</div>)))}
-{activeChars.map(ch=><button key={"vb"+ch.id} onClick={()=>aRI(ch.id)} style={{...Z.pB,fontSize:8,width:28,height:28}} title={ch.name}>+</button>)}
-</div>}
 </div>
 </div>
 );})()}
@@ -2043,10 +2131,10 @@ return(
 
 {/* Base columns group */}
 {(()=>{
-  const basePosTokens=baseChks.filter(c=>c.side==="pos"&&c.enabled).reduce((s,c)=>s+Math.ceil(c.text.length/4),0);
-  const baseNegTokens=baseChks.filter(c=>c.side==="neg"&&c.enabled).reduce((s,c)=>s+Math.ceil(c.text.length/4),0);
-  const allPosTokens=basePosTokens+activeChars.reduce((s,ch)=>s+ch.chks.filter(c=>c.side==="pos"&&c.enabled).reduce((s2,c)=>s2+Math.ceil(c.text.length/4),0),0);
-  const allNegTokens=baseNegTokens+activeChars.reduce((s,ch)=>s+ch.chks.filter(c=>c.side==="neg"&&c.enabled).reduce((s2,c)=>s2+Math.ceil(c.text.length/4),0),0);
+  const basePosTokens=baseChks.filter(c=>c.side==="pos"&&isChkActive(c)).reduce((s,c)=>s+Math.ceil(getChkPrompt(c).length/4),0);
+  const baseNegTokens=baseChks.filter(c=>c.side==="neg"&&isChkActive(c)).reduce((s,c)=>s+Math.ceil(getChkPrompt(c).length/4),0);
+  const allPosTokens=basePosTokens+activeChars.reduce((s,ch)=>s+ch.chks.filter(c=>c.side==="pos"&&isChkActive(c)).reduce((s2,c)=>s2+Math.ceil(getChkPrompt(c).length/4),0),0);
+  const allNegTokens=baseNegTokens+activeChars.reduce((s,ch)=>s+ch.chks.filter(c=>c.side==="neg"&&isChkActive(c)).reduce((s2,c)=>s2+Math.ceil(getChkPrompt(c).length/4),0),0);
   const maxTokens=512;
   const totalUsed=allPosTokens+allNegTokens;
   const overLimit=totalUsed>maxTokens;
@@ -2063,7 +2151,8 @@ return(
       <div className="scroll-x" style={{display:"flex",gap:8,alignItems:"flex-start"}}>
         {baseCols.map((col,i)=><CP key={col.id} col={col} ci={i} tt={baseCols.length} chks={baseChks} lb="b"
           oMC={(id,d)=>mC("b",id,d)} oRC={c=>rC("b",c)} oDC={id=>dCC("b",id)}
-          oAK={(cid,s)=>aK("b",cid,s)} oEK={c=>eK("b",c)} oDK={id=>dK("b",id)} oTK={id=>tK("b",id)} oMK={(id,d)=>mK("b",id,d)}/>)}
+          oAG={(cid,s)=>aG("b",cid,s)} oEK={c=>eK("b",c)} oDK={id=>dK("b",id)} oMK={(id,d)=>mK("b",id,d)}
+          oSG={(chkId,optId)=>sG("b",chkId,optId)} oAO={chkId=>aO("b",chkId)} oEO={(chkId,opt)=>eO("b",chkId,opt)} oDO={(chkId,optId)=>dO("b",chkId,optId)}/>)}
       </div>
     </div>}
   </div>);
@@ -2071,13 +2160,13 @@ return(
 
 {/* Character column groups */}
 {activeChars.map(ch=>{
-  const chPosTokens=ch.chks.filter(c=>c.side==="pos"&&c.enabled).reduce((s,c)=>s+Math.ceil(c.text.length/4),0);
-  const chNegTokens=ch.chks.filter(c=>c.side==="neg"&&c.enabled).reduce((s,c)=>s+Math.ceil(c.text.length/4),0);
+  const chPosTokens=ch.chks.filter(c=>c.side==="pos"&&isChkActive(c)).reduce((s,c)=>s+Math.ceil(getChkPrompt(c).length/4),0);
+  const chNegTokens=ch.chks.filter(c=>c.side==="neg"&&isChkActive(c)).reduce((s,c)=>s+Math.ceil(getChkPrompt(c).length/4),0);
   const isOpen=!(collapsed||{})[ch.id];
   return(<div key={ch.id} style={{marginBottom:10}}>
     <div onClick={()=>up(p=>({...p,collapsed:{...(p.collapsed||{}),[ch.id]:!(p.collapsed||{})[ch.id]}}))} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",background:"rgba(255,140,60,.06)",borderRadius:isOpen?"8px 8px 0 0":"8px",cursor:"pointer",border:"1px solid rgba(255,140,60,.12)"}}>
       <span style={{fontSize:12,color:"#c90",transition:"transform .2s",transform:isOpen?"rotate(90deg)":"rotate(0)"}}>▶</span>
-      <div className="ct" style={{width:24,height:24,borderRadius:4,fontSize:11}}>{ch.thumbnail?<img src={ch.thumbnail}/>:<span>👤</span>}</div>
+      <div className="ct" style={{width:24,height:24,borderRadius:4,fontSize:11}}><span>👤</span></div>
       <span style={{fontSize:13,fontWeight:700,color:"#ffb080",flex:1}}>{ch.name}</span>
       <span style={{fontSize:10,color:"#888",fontFamily:"'JetBrains Mono',monospace"}}>{chPosTokens}+{chNegTokens}t</span>
       <button onClick={e=>{e.stopPropagation();aC(ch.id)}} style={{...Z.pB,width:24,height:24,fontSize:12}}>+</button>
@@ -2086,7 +2175,8 @@ return(
       <div className="scroll-x" style={{display:"flex",gap:8,alignItems:"flex-start"}}>
         {ch.cols.map((col,i)=><CP key={col.id} col={col} ci={i} tt={ch.cols.length} chks={ch.chks} lb="c"
           oMC={(id,d)=>mC(ch.id,id,d)} oRC={c=>rC(ch.id,c)} oDC={id=>dCC(ch.id,id)}
-          oAK={(cid,s)=>aK(ch.id,cid,s)} oEK={c=>eK(ch.id,c)} oDK={id=>dK(ch.id,id)} oTK={id=>tK(ch.id,id)} oMK={(id,d)=>mK(ch.id,id,d)}/>)}
+          oAG={(cid,s)=>aG(ch.id,cid,s)} oEK={c=>eK(ch.id,c)} oDK={id=>dK(ch.id,id)} oMK={(id,d)=>mK(ch.id,id,d)}
+          oSG={(chkId,optId)=>sG(ch.id,chkId,optId)} oAO={chkId=>aO(ch.id,chkId)} oEO={(chkId,opt)=>eO(ch.id,chkId,opt)} oDO={(chkId,optId)=>dO(ch.id,chkId,optId)}/>)}
       </div>
     </div>}
   </div>);
@@ -2523,23 +2613,19 @@ return(
 {/* CHUNK MODAL */}
 <Mod open={!!mo} onClose={()=>sMo(null)} title={mTi} w={isTx?"min(700px,94vw)":undefined}>
 <div style={{display:"flex",flexDirection:"column",gap:10}}>
-<div><label style={Z.lb}>{isTx?"라벨":"이름"}</label>
-<input ref={lR} key={mo?.t+(mo?.d?.id||"")} defaultValue={dLb} placeholder={isTx?"예: 애니메이션풍":"예: 의상"} style={Z.ip} autoFocus/></div>
+<div><label style={Z.lb}>이름</label>
+<input ref={lR} key={mo?.t+(mo?.d?.id||"")} defaultValue={dLb} placeholder={isTx?"예: 검은 롱헤어":mo?.t==="ag"?"예: 헤어스타일":"예: 의상"} style={Z.ip} autoFocus/></div>
 {isTx&&<div><label style={Z.lb}>프롬프트</label>
-<RTA innerRef={tR} keyProp={"t"+(mo?.d?.id||"")} defaultValue={dTx} placeholder="masterpiece, best quality, ..." rows={8} style={{...Z.ip,fontFamily:"'JetBrains Mono',monospace",fontSize:12,minHeight:120,lineHeight:1.5}}/></div>}
+<RTA innerRef={tR} keyProp={"t"+(mo?.d?.id||"")} defaultValue={dTx} placeholder="black long hair, straight hair, ..." rows={8} style={{...Z.ip,fontFamily:"'JetBrains Mono',monospace",fontSize:12,minHeight:120,lineHeight:1.5}}/></div>}
 <button onClick={hSv} style={Z.sv}>저장</button></div></Mod>
 
 {/* CHAR MODAL */}
 <Mod open={!!cm} onClose={()=>sCm(null)} title={cm?.t==="a"?"캐릭터 추가":"캐릭터 수정"}>
 <div style={{display:"flex",flexDirection:"column",gap:12}}>
-<div style={{display:"flex",gap:10}}>
-<div><div onClick={()=>fR.current?.click()} style={{width:64,height:64,borderRadius:5,background:"#1a1a2e",border:"1px dashed rgba(255,255,255,.15)",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}>
-{tp?<img src={tp} style={{width:"100%",height:"100%",objectFit:"cover"}}/>:<span style={{color:"#555",fontSize:10}}>썸네일</span>}</div>
-<input ref={fR} type="file" accept="image/*" style={{display:"none"}} onChange={hTU}/></div>
-<div style={{flex:1}}><label style={Z.lb}>이름</label>
+<div><label style={Z.lb}>이름</label>
 <input ref={cR} key={cm?.c?.id||"n"} defaultValue={cm?.c?.name||""} placeholder="예: 아리아" style={Z.ip} autoFocus/>
 <label style={{...Z.lb,marginTop:6}}>메모</label>
-<RTA innerRef={nR} keyProp={"n"+(cm?.c?.id||"")} defaultValue={cm?.c?.notes||""} placeholder="특징, 설정 등" rows={2} style={{...Z.ip,fontSize:11}}/></div></div>
+<RTA innerRef={nR} keyProp={"n"+(cm?.c?.id||"")} defaultValue={cm?.c?.notes||""} placeholder="특징, 설정 등" rows={2} style={{...Z.ip,fontSize:11}}/></div>
 <button onClick={svC} style={Z.sv}>{cm?.t==="a"?"추가":"저장"}</button></div></Mod>
 
 {/* SETTINGS MODAL */}
