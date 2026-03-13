@@ -209,9 +209,51 @@ async function imF(){if(FS){try{const[h]=await window.showOpenFilePicker({id:PK,
 
 /* ═══ NAI API ═══ */
 const NAI_IMG="https://image.novelai.net/ai/generate-image";
+const NAI_ENCODE_VIBE="https://image.novelai.net/ai/encode-vibe";
 const NAI_SUB="https://api.novelai.net/user/subscription";
 const UC_PRESET_0="nsfw, lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page";
 const QUALITY_SUFFIX=", very aesthetic, masterpiece, no text";
+
+// Encode vibe via NAI server (costs 2 Anlas per encode)
+async function encodeVibeAPI(token,imageB64,informationExtracted,model){
+  token=(token||"").trim();
+  // Strip data URL prefix if present
+  const b64=imageB64.replace(/^data:image\/[^;]+;base64,/,"");
+  const payload={image:b64,information_extracted:informationExtracted,model:model||"nai-diffusion-4-5-full"};
+  console.log("=== ENCODE-VIBE REQUEST ===");
+  console.log("Model:",payload.model,"IE:",informationExtracted,"Image b64 len:",b64.length);
+  const resp=await fetch(NAI_ENCODE_VIBE,{method:"POST",body:JSON.stringify(payload),headers:{"Authorization":"Bearer "+token,"Content-Type":"application/json"}});
+  if(!resp.ok){const e=await resp.text();console.error("encode-vibe error:",resp.status,e);throw new Error("NAI encode-vibe "+resp.status+": "+e.slice(0,200))}
+  // Read response — may be binary (zip), JSON, or empty
+  const ct=resp.headers.get("content-type")||"";
+  const cl=resp.headers.get("content-length");
+  console.log("=== ENCODE-VIBE RESPONSE ===","status:",resp.status,"content-type:",ct,"content-length:",cl);
+  const buf=await resp.arrayBuffer();
+  console.log("Response body size:",buf.byteLength,"bytes");
+  if(buf.byteLength>0){
+    // Try text/JSON parse
+    try{const txt=new TextDecoder().decode(buf);
+      console.log("Response as text (first 500):",txt.slice(0,500));
+      try{return JSON.parse(txt)}catch(e){}
+      return{text:txt};
+    }catch(e){}
+    // Binary — return as base64
+    const bytes=new Uint8Array(buf);
+    const b64r=btoa(String.fromCharCode.apply(null,bytes.length<65536?bytes:Array.from(bytes)));
+    console.log("Response as base64 (first 100):",b64r.slice(0,100));
+    return{binary:b64r,size:buf.byteLength};
+  }
+  console.log("Response body is empty");
+  return{empty:true};
+}
+
+// Compute cache_secret_key from image data (SHA-256 hash)
+async function computeVibeCacheKey(imageB64){
+  const b64=imageB64.replace(/^data:image\/[^;]+;base64,/,"");
+  const data=new TextEncoder().encode(b64);
+  const hash=await crypto.subtle.digest("SHA-256",data);
+  return Array.from(new Uint8Array(hash)).map(b=>b.toString(16).padStart(2,"0")).join("");
+}
 
 async function fetchAnlas(token){
   token=(token||"").trim();
@@ -273,29 +315,33 @@ async function generateImage(token,se,basePos,baseNeg,charPrompts,vibeRefs,i2iOp
   };
   params._inputOverride=effectiveBasePos;
 
-  // Vibe transfer
+  // Vibe transfer (use cached keys from encode-vibe, fallback to raw base64)
   if(vibeRefs&&vibeRefs.length>0){
-    params.reference_image_multiple=[];
-    params.reference_strength_multiple=[];
-    params.reference_information_extracted_multiple=[];
-    for(const ref of vibeRefs){
-      const b64=ref.d.replace(/^data:image\/[^;]+;base64,/,"");
-      params.reference_image_multiple.push(b64);
-      params.reference_strength_multiple.push(ref.s);
-      params.reference_information_extracted_multiple.push(ref.ie);
+    const encoded=vibeRefs.filter(r=>r.cacheKey);
+    const raw=vibeRefs.filter(r=>!r.cacheKey);
+    if(encoded.length>0){
+      params.reference_image_multiple_cached=encoded.map(r=>({cache_secret_key:r.cacheKey}));
+      params.reference_strength_multiple=encoded.map(r=>r.s);
+      // IE was already set during encode-vibe, no need for reference_information_extracted_multiple
+      params.normalize_reference_strength_multiple=true;
+      console.log("=== VIBE TRANSFER (CACHED) ===");
+      console.log("Cached vibes:",encoded.length,"keys:",encoded.map(r=>r.cacheKey.slice(0,16)+"..."));
+      console.log("Strengths:",params.reference_strength_multiple);
     }
-    params.normalize_reference_strength_multiple=true;
-    console.log("=== VIBE TRANSFER DEBUG ===");
-    console.log("Vibe count:",vibeRefs.length);
-    console.log("Strengths:",params.reference_strength_multiple);
-    console.log("Info extracted:",params.reference_information_extracted_multiple);
-    console.log("Image b64 lengths:",params.reference_image_multiple.map(b=>b.length));
-    console.log("Image formats:",params.reference_image_multiple.map(b=>{
-      if(b.startsWith("iVBOR"))return"PNG ✓";
-      if(b.startsWith("/9j/"))return"JPEG ✓";
-      if(b.startsWith("UklGR"))return"WebP ✗ (NAI may reject)";
-      return"UNKNOWN: "+b.slice(0,8);
-    }));
+    if(raw.length>0){
+      // Fallback for any vibes that weren't encoded via API
+      if(!params.reference_image_multiple)params.reference_image_multiple=[];
+      if(!params.reference_strength_multiple)params.reference_strength_multiple=[];
+      if(!params.reference_information_extracted_multiple)params.reference_information_extracted_multiple=[];
+      for(const ref of raw){
+        const b64=ref.d.replace(/^data:image\/[^;]+;base64,/,"");
+        params.reference_image_multiple.push(b64);
+        params.reference_strength_multiple.push(ref.s);
+        params.reference_information_extracted_multiple.push(ref.ie);
+      }
+      params.normalize_reference_strength_multiple=true;
+      console.log("=== VIBE TRANSFER (RAW FALLBACK) ===","count:",raw.length);
+    }
   }
 
   // img2img support
@@ -374,19 +420,27 @@ async function doInpaint(token,se,basePos,baseNeg,charPrompts,vibeRefs,imgB64,ma
     v4_negative_prompt:{caption:{base_caption:negAll,char_captions:[]},legacy_uc:false},
     negative_prompt:negAll,
   };
-  // Vibe transfer for inpaint
+  // Vibe transfer for inpaint (cached or raw fallback)
   if(vibeRefs&&vibeRefs.length>0){
-    params.reference_image_multiple=[];
-    params.reference_strength_multiple=[];
-    params.reference_information_extracted_multiple=[];
-    for(const ref of vibeRefs){
-      const b64=ref.d.replace(/^data:image\/[^;]+;base64,/,"");
-      params.reference_image_multiple.push(b64);
-      params.reference_strength_multiple.push(ref.s);
-      params.reference_information_extracted_multiple.push(ref.ie);
+    const encoded=vibeRefs.filter(r=>r.cacheKey);
+    const raw=vibeRefs.filter(r=>!r.cacheKey);
+    if(encoded.length>0){
+      params.reference_image_multiple_cached=encoded.map(r=>({cache_secret_key:r.cacheKey}));
+      params.reference_strength_multiple=encoded.map(r=>r.s);
+      console.log("=== INPAINT VIBE (CACHED) ===","count:",encoded.length);
     }
-    console.log("=== INPAINT VIBE DEBUG ===");
-    console.log("Vibe count:",vibeRefs.length,"Strengths:",params.reference_strength_multiple,"IE:",params.reference_information_extracted_multiple);
+    if(raw.length>0){
+      if(!params.reference_image_multiple)params.reference_image_multiple=[];
+      if(!params.reference_strength_multiple)params.reference_strength_multiple=[];
+      if(!params.reference_information_extracted_multiple)params.reference_information_extracted_multiple=[];
+      for(const ref of raw){
+        const b64=ref.d.replace(/^data:image\/[^;]+;base64,/,"");
+        params.reference_image_multiple.push(b64);
+        params.reference_strength_multiple.push(ref.s);
+        params.reference_information_extracted_multiple.push(ref.ie);
+      }
+      console.log("=== INPAINT VIBE (RAW) ===","count:",raw.length);
+    }
   }
   // qualityToggle: append quality suffix
   let inpaintInput=effectiveBasePos;
@@ -1001,7 +1055,7 @@ const doGenerate=async()=>{
   if(mode==="inpaint"&&(!baseImg||!ipMaskB64)){tw("⚠ Base Image와 마스크가 필요합니다");return}
   sGenLoading(true);sGenError(null);
   try{
-    const activeVibes=vibeRefs.filter(r=>r.active);
+    const activeVibes=vibeRefs.filter(r=>r.active&&r.cacheKey);
     let url;
     if(mode==="inpaint"&&baseImg&&ipMaskB64){
       // Get base image as b64
@@ -1913,15 +1967,41 @@ if(cm.t==="a"){const id=G();up(p=>({...p,chars:[...p.chars,{id,name:nm,cols:[{id
 const dC=id=>{if(!confirm("삭제?"))return;up(p=>({...p,chars:p.chars.filter(c=>c.id!==id),activeIds:(p.activeIds||[]).filter(x=>x!==id)}))};
 
 /* ── Vibe Transfer (base level) ── */
-// Convert uploaded image to PNG base64 via canvas (NAI requires PNG/JPEG, not WebP)
-const vibeImgToPng=(file,cb)=>{const r=new FileReader();r.onload=v=>{const img=new Image();img.onload=()=>{const cv=document.createElement("canvas");cv.width=img.naturalWidth;cv.height=img.naturalHeight;cv.getContext("2d").drawImage(img,0,0);const pngDataUrl=cv.toDataURL("image/png");console.log("=== VIBE IMG CONVERT ===","src:",file.type,"orig size:",v.target.result.length,"→ png size:",pngDataUrl.length,"dims:",img.naturalWidth,"x",img.naturalHeight);cb(pngDataUrl)};img.onerror=()=>{console.warn("Vibe image load failed, using original");cb(v.target.result)};img.src=v.target.result};r.readAsDataURL(file)};
-const aVI=()=>{const i=document.createElement("input");i.type="file";i.accept="image/*";i.onchange=e=>{const f=e.target.files[0];if(!f)return;vibeImgToPng(f,pngData=>{up(p=>({...p,vibeRefs:[...(p.vibeRefs||[]),{id:G(),d:pngData,s:.6,ie:1,active:true}],settings:{...p.settings,anlasBalance:Math.max(0,(p.settings.anlasBalance||0)-2)}}));tw("✓ 바이브 추가됨 (-2 Anlas)")})};i.click()};
+// Convert uploaded image file to data URL (keep original format, NAI encode-vibe handles it)
+const vibeImgToDataUrl=(file,cb)=>{const r=new FileReader();r.onload=v=>{
+  console.log("=== VIBE IMG LOADED ===","type:",file.type,"size:",v.target.result.length);
+  cb(v.target.result)};r.readAsDataURL(file)};
+// Add vibe image (just stores locally, needs encoding before use)
+const aVI=()=>{const i=document.createElement("input");i.type="file";i.accept="image/*";i.onchange=e=>{const f=e.target.files[0];if(!f)return;vibeImgToDataUrl(f,data=>{up(p=>({...p,vibeRefs:[...(p.vibeRefs||[]),{id:G(),d:data,s:.6,ie:1,active:false,cacheKey:null,encoding:false}]}));tw("바이브 추가됨 — 인코딩을 눌러주세요")})};i.click()};
 const rVI=rid=>up(p=>({...p,vibeRefs:(p.vibeRefs||[]).filter(r=>r.id!==rid)}));
 const uVI=(rid,f,v)=>up(p=>({...p,vibeRefs:(p.vibeRefs||[]).map(r=>r.id===rid?{...r,[f]:v}:r)}));
-// Vibe toggle (encoding happens server-side during generation)
-const toggleVibe=rid=>up(p=>({...p,vibeRefs:(p.vibeRefs||[]).map(r=>r.id===rid?{...r,active:!r.active}:r)}));
-// Replace vibe image
-const replaceVibeImg=rid=>{const i=document.createElement("input");i.type="file";i.accept="image/*";i.onchange=e=>{const f=e.target.files[0];if(!f)return;vibeImgToPng(f,pngData=>{uVI(rid,"d",pngData);sVibeConfirm(null);up(p=>({...p,settings:{...p.settings,anlasBalance:Math.max(0,(p.settings.anlasBalance||0)-2)}}));tw("✓ 바이브 이미지 교체됨 (-2 Anlas)")})};i.click()};
+// Encode vibe via NAI API (real server-side encoding, costs 2 Anlas)
+const encodeVibe=async(rid)=>{
+  const ref=(D.vibeRefs||[]).find(r=>r.id===rid);
+  if(!ref)return;
+  if(!se.apiToken){tw("⚠ API 토큰을 설정하세요");return}
+  uVI(rid,"encoding",true);
+  try{
+    const result=await encodeVibeAPI(se.apiToken,ref.d,ref.ie,se.model);
+    const cacheKey=await computeVibeCacheKey(ref.d);
+    console.log("=== ENCODE COMPLETE ===","cacheKey:",cacheKey.slice(0,32)+"...","API result:",result);
+    up(p=>({...p,vibeRefs:(p.vibeRefs||[]).map(r=>r.id===rid?{...r,cacheKey,active:true,encoding:false}:r)}));
+    fetchAnlas(se.apiToken).then(r=>{sAnlas(r);console.log("=== ANLAS AFTER ENCODE ===",r?.anlas)});
+    tw("✓ 바이브 인코딩 완료 (-2 Anlas)");
+  }catch(e){
+    uVI(rid,"encoding",false);
+    tw("⚠ 인코딩 실패: "+e.message);
+    console.error("encodeVibe error:",e);
+  }
+};
+// Toggle active (only if encoded)
+const toggleVibe=rid=>{
+  const ref=(D.vibeRefs||[]).find(r=>r.id===rid);
+  if(!ref?.cacheKey){tw("⚠ 먼저 인코딩해주세요");return}
+  up(p=>({...p,vibeRefs:(p.vibeRefs||[]).map(r=>r.id===rid?{...r,active:!r.active}:r)}));
+};
+// Replace vibe image (resets encoding)
+const replaceVibeImg=rid=>{const i=document.createElement("input");i.type="file";i.accept="image/*";i.onchange=e=>{const f=e.target.files[0];if(!f)return;vibeImgToDataUrl(f,data=>{up(p=>({...p,vibeRefs:(p.vibeRefs||[]).map(r=>r.id===rid?{...r,d:data,cacheKey:null,active:false,encoding:false}:r)}));sVibeConfirm(null);tw("이미지 교체됨 — 재인코딩 필요")})};i.click()};
 const[vibeConfirm,sVibeConfirm]=useState(null); // vibe id for replace confirm modal
 
 /* ── Col/Chunk ops ── */
@@ -2122,12 +2202,14 @@ return(
 <div style={{padding:6}}>
 {vibeRefs.length===0&&<div style={{fontSize:10,color:"#555",textAlign:"center",padding:10}}>이미지를 추가하면<br/>스타일이 참조됩니다</div>}
 {vibeRefs.map(r=>(
-<div key={r.id} style={{marginBottom:8,background:r.active?"rgba(255,140,60,.06)":"rgba(255,255,255,.02)",border:`1px solid ${r.active?"rgba(255,140,60,.2)":"rgba(255,255,255,.06)"}`,borderRadius:8,padding:8,transition:"all .15s"}}>
+<div key={r.id} style={{marginBottom:8,background:r.active?"rgba(255,140,60,.06)":"rgba(255,255,255,.02)",border:`1px solid ${r.active?"rgba(255,140,60,.2)":"rgba(255,255,255,.06)"}`,borderRadius:8,padding:8,opacity:r.encoding?.7:1,transition:"all .15s"}}>
 {/* Image */}
 <div style={{position:"relative",marginBottom:6}}>
 <img src={r.d} style={{width:"100%",maxHeight:120,objectFit:"contain",borderRadius:6,display:"block",border:"1px solid rgba(255,140,60,.1)"}}/>
 <button onClick={()=>rVI(r.id)} style={{position:"absolute",top:4,right:4,background:"rgba(255,50,50,.85)",border:"none",borderRadius:"50%",width:20,height:20,color:"#fff",fontSize:10,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
-{!r.active&&<div style={{position:"absolute",bottom:4,left:4,fontSize:8,padding:"2px 6px",borderRadius:3,background:"rgba(0,0,0,.7)",color:"#888",fontWeight:600}}>비활성</div>}
+{!r.cacheKey&&!r.encoding&&<div style={{position:"absolute",bottom:4,left:4,fontSize:8,padding:"2px 6px",borderRadius:3,background:"rgba(0,0,0,.7)",color:"#fa5",fontWeight:600}}>미인코딩</div>}
+{r.encoding&&<div style={{position:"absolute",bottom:4,left:4,fontSize:8,padding:"2px 6px",borderRadius:3,background:"rgba(0,0,0,.7)",color:"#ff0",fontWeight:600}}>인코딩 중...</div>}
+{r.cacheKey&&!r.active&&<div style={{position:"absolute",bottom:4,left:4,fontSize:8,padding:"2px 6px",borderRadius:3,background:"rgba(0,0,0,.7)",color:"#888",fontWeight:600}}>비활성</div>}
 </div>
 {/* Sliders */}
 <div style={{display:"flex",alignItems:"center",gap:4,marginBottom:3,minWidth:0}}>
@@ -2136,18 +2218,22 @@ return(
 <span style={{fontSize:9,color:"#fa5",fontFamily:"monospace",flexShrink:0,width:24,textAlign:"right"}}>{r.s}</span>
 </div>
 <div style={{display:"flex",alignItems:"center",gap:4,marginBottom:6,minWidth:0}}>
-<span style={{fontSize:9,color:"#888",flexShrink:0,width:50}}>Info Ext.</span>
-<input type="range" min={0} max={1} step={0.05} value={r.ie} onChange={e=>uVI(r.id,"ie",+e.target.value)} style={{flex:1,minWidth:0}}/>
+<span style={{fontSize:9,color:r.cacheKey?"#555":"#888",flexShrink:0,width:50}}>Info Ext.</span>
+<input type="range" min={0} max={1} step={0.05} value={r.ie} disabled={!!r.cacheKey}
+  onChange={e=>{if(!r.cacheKey)uVI(r.id,"ie",+e.target.value)}} style={{flex:1,minWidth:0,opacity:r.cacheKey?.5:1}}/>
 <span style={{fontSize:9,color:"#fa5",fontFamily:"monospace",flexShrink:0,width:24,textAlign:"right"}}>{r.ie}</span>
 </div>
-{/* Bottom row: Replace button + Active toggle */}
+{/* Bottom row: Encode/Replace button + Active toggle */}
 <div style={{display:"flex",gap:6,alignItems:"center"}}>
-<button onClick={()=>sVibeConfirm(r.id)} style={{flex:1,padding:"6px 0",borderRadius:6,border:"1px solid rgba(255,255,255,.1)",cursor:"pointer",fontSize:11,fontWeight:600,background:"rgba(255,255,255,.04)",color:"#999"}}>
-🔄 교체</button>
+{!r.cacheKey?
+<button onClick={()=>encodeVibe(r.id)} disabled={r.encoding} style={{flex:1,padding:"6px 0",borderRadius:6,border:"1px solid rgba(255,140,60,.3)",cursor:r.encoding?"wait":"pointer",fontSize:11,fontWeight:600,background:"rgba(255,140,60,.12)",color:"#fa5",opacity:r.encoding?.5:1}}>
+{r.encoding?"⏳ 인코딩 중...":"인코딩 (-2₳)"}</button>
+:<button onClick={()=>sVibeConfirm(r.id)} style={{flex:1,padding:"6px 0",borderRadius:6,border:"1px solid rgba(80,200,100,.2)",cursor:"pointer",fontSize:11,fontWeight:600,background:"rgba(80,200,100,.1)",color:"#5c5"}}>
+✓ 인코딩됨</button>}
 {/* Active toggle */}
-<div onClick={()=>toggleVibe(r.id)} style={{width:44,height:24,borderRadius:12,cursor:"pointer",
+<div onClick={()=>toggleVibe(r.id)} style={{width:44,height:24,borderRadius:12,cursor:r.cacheKey?"pointer":"not-allowed",
   background:r.active?"#fa5":"rgba(255,255,255,.1)",border:"1px solid "+(r.active?"rgba(255,140,60,.4)":"rgba(255,255,255,.1)"),
-  position:"relative",transition:"all .2s",flexShrink:0}}>
+  position:"relative",transition:"all .2s",flexShrink:0,opacity:r.cacheKey?1:.4}}>
 <div style={{width:18,height:18,borderRadius:9,background:"#fff",position:"absolute",top:2,left:r.active?22:2,transition:"left .2s",boxShadow:"0 1px 3px rgba(0,0,0,.3)"}}/>
 </div>
 </div>
