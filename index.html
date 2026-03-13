@@ -789,24 +789,52 @@ const ipSaveSnap=()=>{
   ipHistoryRef.current.push(cv.getContext("2d").getImageData(0,0,cv.width,cv.height));
   if(ipHistoryRef.current.length>30)ipHistoryRef.current.shift();
 };
+// Two-rect stamp: outer=dark border, inner=lighter fill. Border stays INSIDE brush area.
+const BORDER_W=2;
+const ipStamp=(ctx,x,y,s,erase)=>{
+  ctx.globalCompositeOperation=erase?"destination-out":"source-over";
+  if(erase){
+    ctx.fillStyle="rgba(0,0,0,1)";
+    ctx.fillRect(Math.round(x-s/2),Math.round(y-s/2),s,s);
+  }else{
+    // Outer rect = darker border color
+    ctx.fillStyle="rgba(50,70,200,1)";
+    ctx.fillRect(Math.round(x-s/2),Math.round(y-s/2),s,s);
+    // Inner rect = lighter fill color (inset by BORDER_W)
+    if(s>BORDER_W*2){
+      ctx.fillStyle="rgba(100,140,255,1)";
+      ctx.fillRect(Math.round(x-s/2)+BORDER_W,Math.round(y-s/2)+BORDER_W,s-BORDER_W*2,s-BORDER_W*2);
+    }
+  }
+};
 const ipStartDraw=(e)=>{
   e.preventDefault();ipSaveSnap();ipDrawing.current=true;
   const p=getIpXY(e);ipLastPos.current=p;
   const cv=ipCanvasRef.current;if(!cv)return;
   const ctx=cv.getContext("2d");
-  ctx.globalCompositeOperation=ipErase?"destination-out":"source-over";
-  ctx.fillStyle=ipErase?"rgba(0,0,0,1)":"rgba(80,110,255,1)";
-  ctx.beginPath();ctx.arc(p.x,p.y,ipBrush/2,0,Math.PI*2);ctx.fill();
+  ctx.imageSmoothingEnabled=false;
+  ipStamp(ctx,p.x,p.y,ipBrush,ipErase);
 };
 const ipDraw=(e)=>{
   e.preventDefault();if(!ipDrawing.current)return;
   const cv=ipCanvasRef.current;if(!cv)return;
   const ctx=cv.getContext("2d");const p=getIpXY(e);
-  ctx.globalCompositeOperation=ipErase?"destination-out":"source-over";
-  ctx.strokeStyle=ipErase?"rgba(0,0,0,1)":"rgba(80,110,255,1)";
-  ctx.lineWidth=ipBrush;ctx.lineCap="round";ctx.lineJoin="round";
+  ctx.imageSmoothingEnabled=false;
+  const s=ipBrush;const er=ipErase;
+  // Bresenham interpolation with two-rect stamps
   if(ipLastPos.current){
-    ctx.beginPath();ctx.moveTo(ipLastPos.current.x,ipLastPos.current.y);ctx.lineTo(p.x,p.y);ctx.stroke();
+    const x0=Math.round(ipLastPos.current.x),y0=Math.round(ipLastPos.current.y);
+    const x1=Math.round(p.x),y1=Math.round(p.y);
+    const dx=Math.abs(x1-x0),dy=Math.abs(y1-y0);
+    const sx=x0<x1?1:-1,sy=y0<y1?1:-1;
+    let err=dx-dy,cx=x0,cy=y0;
+    while(true){
+      ipStamp(ctx,cx,cy,s,er);
+      if(cx===x1&&cy===y1)break;
+      const e2=2*err;
+      if(e2>-dy){err-=dy;cx+=sx}
+      if(e2<dx){err+=dx;cy+=sy}
+    }
   }
   ipLastPos.current=p;
 };
@@ -814,8 +842,8 @@ const ipStopDraw=()=>{ipDrawing.current=false;ipLastPos.current=null};
 const ipClear=()=>{const cv=ipCanvasRef.current;if(cv)cv.getContext("2d").clearRect(0,0,cv.width,cv.height);ipHistoryRef.current=[]};
 const ipUndo=()=>{
   const cv=ipCanvasRef.current;if(!cv)return;
-  const h=ipHistoryRef.current;if(h.length===0){cv.getContext("2d").clearRect(0,0,cv.width,cv.height);return}
-  cv.getContext("2d").putImageData(h.pop(),0,0);
+  const h=ipHistoryRef.current;if(h.length===0){cv.getContext("2d").clearRect(0,0,cv.width,cv.height)}
+  else{cv.getContext("2d").putImageData(h.pop(),0,0)}
 };
 const getMaskB64=()=>{
   const cv=ipCanvasRef.current;if(!cv)return null;
@@ -823,9 +851,9 @@ const getMaskB64=()=>{
   const src=cv.getContext("2d").getImageData(0,0,w,h);
   const out=document.createElement("canvas");out.width=w;out.height=h;
   const octx=out.getContext("2d");const od=octx.createImageData(w,h);
-  // Clean binary mask: white = inpaint area, black = keep
+  // Clean binary mask: white = inpaint area, black = keep (no AA with square brush)
   for(let i=0;i<src.data.length;i+=4){
-    const hasMask=src.data[i+2]>128||src.data[i+3]>20;
+    const hasMask=src.data[i+2]>128&&src.data[i+3]>128;
     od.data[i]=od.data[i+1]=od.data[i+2]=hasMask?255:0;od.data[i+3]=255;
   }
   octx.putImageData(od,0,0);
@@ -845,34 +873,19 @@ const applyIpMask=()=>{
   const maskB64=getMaskB64();
   if(!maskB64){tw("⚠ 마스크를 그려주세요");return}
   sIPMaskB64(maskB64);
-  // Create NAI-style visual overlay: semi-transparent fill + darker border
+  // Create visual overlay from canvas (already has dark border + light fill from stamps)
   const cv=ipCanvasRef.current;if(cv){
     const w=cv.width,h=cv.height;
     const src=cv.getContext("2d").getImageData(0,0,w,h);
-    // Binary mask array
-    const mask=new Uint8Array(w*h);
-    for(let i=0;i<src.data.length;i+=4)mask[i/4]=src.data[i+2]>128?1:0;
-    // Erode mask by R pixels for border detection
-    const eroded=new Uint8Array(w*h);
-    const R=3;
-    for(let y=0;y<h;y++){for(let x=0;x<w;x++){
-      let ok=true;
-      for(let dy=-R;dy<=R&&ok;dy++){for(let dx=-R;dx<=R&&ok;dx++){
-        const nx=x+dx,ny=y+dy;
-        if(nx<0||nx>=w||ny<0||ny>=h||!mask[ny*w+nx])ok=false;
-      }}
-      eroded[y*w+x]=ok?1:0;
-    }}
-    // Render: fill=semi-transparent blue, border=darker opaque blue
     const vis=document.createElement("canvas");vis.width=w;vis.height=h;
     const vctx=vis.getContext("2d");const vd=vctx.createImageData(w,h);
-    for(let i=0;i<mask.length;i++){
-      const idx=i*4;
-      if(mask[i]){
-        const isBorder=!eroded[i];
-        vd.data[idx]=80;vd.data[idx+1]=110;vd.data[idx+2]=255;
-        vd.data[idx+3]=isBorder?200:90;
-      }else{vd.data[idx+3]=0}
+    for(let i=0;i<src.data.length;i+=4){
+      if(src.data[i+2]>128&&src.data[i+3]>128){
+        // Border (R<80) vs fill (R>=80)
+        const isBorder=src.data[i]<80;
+        vd.data[i]=80;vd.data[i+1]=110;vd.data[i+2]=255;
+        vd.data[i+3]=isBorder?200:80;
+      }
     }
     vctx.putImageData(vd,0,0);
     sIPMaskUrl(vis.toDataURL("image/png"));
@@ -1822,7 +1835,7 @@ backgroundImage:"repeating-conic-gradient(#333 0% 25%, #555 0% 50%)",backgroundS
 <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",padding:10,minHeight:0}}>
 <div style={{position:"relative",maxWidth:"100%",maxHeight:"100%",aspectRatio:String(se.width/se.height)}}>
 <img ref={ipImgRef} src={baseImg} style={{width:"100%",height:"100%",objectFit:"contain",display:"block",borderRadius:4,userSelect:"none",WebkitUserSelect:"none"}} draggable={false}/>
-<canvas ref={ipCanvasRef} style={{position:"absolute",inset:0,width:"100%",height:"100%",cursor:"crosshair",touchAction:"none",borderRadius:4,opacity:0.45}}
+<canvas ref={ipCanvasRef} style={{position:"absolute",inset:0,width:"100%",height:"100%",cursor:"crosshair",touchAction:"none",borderRadius:4,opacity:0.5}}
   onMouseDown={ipStartDraw} onMouseMove={ipDraw} onMouseUp={ipStopDraw} onMouseLeave={ipStopDraw}
   onTouchStart={ipStartDraw} onTouchMove={ipDraw} onTouchEnd={ipStopDraw}/>
 </div>
