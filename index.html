@@ -740,17 +740,21 @@ const downloadImg=async()=>{
   const blob=await resp.blob();
   const fmt=se.format||"png";
   let finalBlob=blob;
+  let actualExt=fmt;
   if(fmt==="webp"&&blob.type!=="image/webp"){
     // Convert to webp via canvas
     const img=new Image();const url=URL.createObjectURL(blob);
     await new Promise(r=>{img.onload=r;img.src=url});
     const cv=document.createElement("canvas");cv.width=img.width;cv.height=img.height;
     cv.getContext("2d").drawImage(img,0,0);
-    finalBlob=await new Promise(r=>cv.toBlob(r,"image/webp",.95));
+    const converted=await new Promise(r=>cv.toBlob(r,"image/webp",.95));
     URL.revokeObjectURL(url);
+    // Verify actual conversion — Safari/iOS may silently fallback to png
+    if(converted&&converted.type==="image/webp"){finalBlob=converted}
+    else{finalBlob=converted||blob;actualExt="png"}
   }
   const a=document.createElement("a");a.href=URL.createObjectURL(finalBlob);
-  a.download=`nai_${Date.now()}.${fmt}`;a.click();URL.revokeObjectURL(a.href);
+  a.download=`nai_${Date.now()}.${actualExt}`;a.click();URL.revokeObjectURL(a.href);
 };
 
 /* ── Image Upload as Base ── */
@@ -1731,7 +1735,8 @@ return(
   const cv=document.createElement("canvas");cv.width=img.width||h.w||se.width;cv.height=img.height||h.h||se.height;
   cv.getContext("2d").drawImage(img,0,0);URL.revokeObjectURL(u);
   const wb=await new Promise(r=>cv.toBlob(r,"image/webp",0.9));
-  const a=document.createElement("a");a.href=URL.createObjectURL(wb);a.download="NAI_"+h.id+".webp";a.click();tw("WebP 저장");
+  const ext=(wb&&wb.type==="image/webp")?"webp":"png";
+  const a=document.createElement("a");a.href=URL.createObjectURL(wb);a.download="NAI_"+h.id+"."+ext;a.click();tw(ext==="webp"?"WebP 저장":"PNG 저장 (WebP 미지원)");
 }} style={{width:"100%",background:"none",border:"none",borderBottom:"1px solid rgba(255,255,255,.06)",color:"#5cb8ff",fontSize:11,padding:"8px 12px",cursor:"pointer",textAlign:"left",fontFamily:"inherit"}}>💾 WebP 저장</button>
 {/* 편집 */}
 <div style={{padding:"6px 12px",fontSize:9,color:"#555",borderBottom:"1px solid rgba(255,255,255,.06)",fontWeight:600}}>편집</div>
@@ -1796,7 +1801,8 @@ return(
   const cv=document.createElement("canvas");cv.width=img.width||h.w||se.width;cv.height=img.height||h.h||se.height;
   cv.getContext("2d").drawImage(img,0,0);URL.revokeObjectURL(u);
   const wb=await new Promise(r=>cv.toBlob(r,"image/webp",0.9));
-  const a=document.createElement("a");a.href=URL.createObjectURL(wb);a.download="NAI_"+h.id+".webp";a.click();tw("WebP 저장");
+  const ext=(wb&&wb.type==="image/webp")?"webp":"png";
+  const a=document.createElement("a");a.href=URL.createObjectURL(wb);a.download="NAI_"+h.id+"."+ext;a.click();tw(ext==="webp"?"WebP 저장":"PNG 저장 (WebP 미지원)");
 }} style={{...Z.hB,fontSize:11,padding:"6px 14px",color:"#5cb8ff"}}>💾 WebP</button>
 <div style={{width:1,height:24,background:"rgba(255,255,255,.08)"}}/>
 <button onClick={async()=>{const url=await gLoadImg();if(url){sHistGallery(null);sEditSrc(url);sEditMode("edit")}}} style={{...Z.hB,fontSize:11,padding:"6px 14px",color:"#5cb8ff"}}>✏️ 편집</button>
@@ -1916,9 +1922,10 @@ return(
   const ctx=out.getContext("2d");ctx.drawImage(img,0,0,se.width,se.height);
   editLayers.forEach(l=>{if(l.visible){const lcv=editLayerCanvases.current[l.id];if(lcv)ctx.drawImage(lcv,0,0)}});
   const blob=await new Promise(r=>out.toBlob(r,"image/webp",0.9));
+  const ext=(blob&&blob.type==="image/webp")?"webp":"png";
   const a=document.createElement("a");a.href=URL.createObjectURL(blob);
-  a.download="NAI_bgremoved_"+Date.now()+".webp";a.click();
-  tw("WebP 내보내기 완료");
+  a.download="NAI_bgremoved_"+Date.now()+"."+ext;a.click();
+  tw(ext==="webp"?"WebP 내보내기 완료":"PNG 내보내기 (WebP 미지원)");
 }} style={{...Z.hB,fontSize:11,padding:"5px 12px",minHeight:44,color:"#5cb8ff"}}>💾 WebP</button>
 <button onClick={()=>{sEditMode(false);sEditSrc(null)}} style={{...Z.hB,fontSize:14,padding:"6px 12px",minHeight:44,color:"#f66"}}>✕</button>
 </div>}
