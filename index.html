@@ -1286,6 +1286,7 @@ const editApplyToGen=()=>{
 // Selective bg-removal: paint mask → send full image → composite only in mask area
 const[bgRemoving,sBgRemoving]=useState(false);
 const[bgProgress,sBgProgress]=useState("");
+const[bgReverse,sBgReverse]=useState(false); // reverse mask: painted=keep, unpainted=remove
 
 const editBgRemove=async(mode)=>{
   // mode: "nai" | "local"
@@ -1328,8 +1329,7 @@ const editBgRemove=async(mode)=>{
     console.log("[BG-Removal] result image:",bgImg.width,"x",bgImg.height);
 
     if(hasMask){
-      // Masked mode: only replace pixels within painted mask area
-      // Build new source: original + bg-removed blended by mask
+      // Masked mode: blend original and bg-removed based on mask
       editSaveSnap();
       const out=document.createElement("canvas");out.width=se.width;out.height=se.height;
       const oCtx=out.getContext("2d");
@@ -1340,9 +1340,13 @@ const editBgRemove=async(mode)=>{
       oCtx.clearRect(0,0,se.width,se.height);
       oCtx.drawImage(bgImg,0,0,se.width,se.height);
       const bgData=oCtx.getImageData(0,0,se.width,se.height);
-      // Blend: where mask is painted, use bg-removed; elsewhere keep original
+      // Blend based on mask + reverse setting
+      // Normal: painted=remove bg, unpainted=keep original
+      // Reverse: painted=keep original, unpainted=remove bg
       for(let i=0;i<aData.data.length;i+=4){
-        if(aData.data[i+3]>20){
+        const inMask=aData.data[i+3]>20;
+        const useBgRemoved=bgReverse?!inMask:inMask;
+        if(useBgRemoved){
           origData.data[i]=bgData.data[i];
           origData.data[i+1]=bgData.data[i+1];
           origData.data[i+2]=bgData.data[i+2];
@@ -1350,13 +1354,11 @@ const editBgRemove=async(mode)=>{
         }
       }
       oCtx.putImageData(origData,0,0);
-      // Replace source image via state
       const newUrl=out.toDataURL("image/png");
       sEditSrc(newUrl);
-      // Clear mask from active layer
       aCtx.clearRect(0,0,acv.width,acv.height);
       compositeEdit();
-      tw("선택 영역 배경 제거 완료!");
+      tw(bgReverse?"보존 영역 외 배경 제거 완료!":"선택 영역 배경 제거 완료!");
     }else{
       // Full mode: replace entire source image
       editSaveSnap();
@@ -1873,10 +1875,14 @@ return(
 <button onClick={()=>sEditTool(editTool==="eraser"?"bgremove":"eraser")} style={{...Z.hB,fontSize:11,padding:"6px 12px",minHeight:44,
   background:editTool==="eraser"?"rgba(255,60,60,.2)":"rgba(100,200,100,.15)",
   color:editTool==="eraser"?"#f66":"#8d8"}}>{editTool==="eraser"?"🧹 지우기":"🖌 영역 선택"}</button>
+<button onClick={()=>sBgReverse(p=>!p)} style={{...Z.hB,fontSize:11,padding:"6px 12px",minHeight:44,
+  background:bgReverse?"rgba(255,180,60,.2)":"transparent",
+  borderColor:bgReverse?"rgba(255,180,60,.4)":"rgba(255,255,255,.1)",
+  color:bgReverse?"#fa5":"#888"}}>{bgReverse?"🛡 보존":"🎯 제거"}</button>
 <button onClick={editUndo} style={{...Z.hB,fontSize:12,padding:"6px 12px",minHeight:44}} title="Ctrl+Z">↩</button>
 <button onClick={editClear} style={{...Z.hB,fontSize:12,padding:"6px 12px",minHeight:44,color:"#f66"}}>✕ 초기화</button>
 <div style={{width:1,height:20,background:"rgba(255,255,255,.08)"}}/>
-<span style={{fontSize:9,color:"#aaa"}}>영역을 칠하면 부분 제거, 안 칠하면 전체 제거</span>
+<span style={{fontSize:9,color:"#aaa"}}>{bgReverse?"칠한 영역 보존, 나머지 배경 제거":"칠한 영역 배경 제거, 안 칠하면 전체 제거"}</span>
 {!bgRemoving&&<button onClick={()=>editBgRemove("local")} className="gen-btn" style={{fontSize:11,padding:"6px 14px",minHeight:44,background:"linear-gradient(135deg,#338844,#55bb77)"}}>🔲 배경 제거 (로컬·무료)</button>}
 {!bgRemoving&&se.apiToken&&<button onClick={()=>{if(!confirm("NAI API를 사용합니다.\nAnlas가 소모됩니다. 계속?"))return;editBgRemove("nai")}} style={{...Z.hB,fontSize:10,padding:"6px 12px",minHeight:44,color:"#da5",borderColor:"rgba(255,180,60,.3)",background:"rgba(255,180,60,.1)"}}>NAI (Anlas)</button>}
 {bgRemoving&&<span style={{fontSize:10,color:"#5cb8ff",padding:"2px 8px",background:"rgba(90,180,255,.1)",borderRadius:4,display:"flex",alignItems:"center",gap:4}}><span className="spinner" style={{width:10,height:10,borderWidth:1.5,display:"inline-block"}}/> {bgProgress}</span>}
