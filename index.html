@@ -284,6 +284,7 @@ async function generateImage(token,se,basePos,baseNeg,charPrompts,vibeRefs,i2iOp
       params.reference_strength_multiple.push(ref.s);
       params.reference_information_extracted_multiple.push(ref.ie);
     }
+    params.normalize_reference_strength_multiple=true;
   }
 
   // img2img support
@@ -292,13 +293,11 @@ async function generateImage(token,se,basePos,baseNeg,charPrompts,vibeRefs,i2iOp
     params.strength=i2iOpts.strength||0.6;
     params.noise=i2iOpts.noise||0;
     params.extra_noise_seed=seed;
-    params.inpaintImg2ImgStrength=1;
     params.autoSmea=false;
     params.deliberate_euler_ancestral_bug=false;
     params.prefer_brownian=true;
     params.color_correct=false;
     params.legacy_uc=false;
-    params.normalize_reference_strength_multiple=true;
     if(params.v4_negative_prompt)params.v4_negative_prompt.legacy_uc=false;
   }
 
