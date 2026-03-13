@@ -105,93 +105,48 @@ async function idbClear(){
   try{const db=await idbOpen();const tx=db.transaction(IDB_STORE,"readwrite");tx.objectStore(IDB_STORE).clear();await new Promise(r=>{tx.oncomplete=r});db.close()}catch(e){}
 }
 
-// WASM WebP encoder — with on-screen diagnostics
-let _webpEncodeFn=null;
+// WASM WebP encoder — loads webp_enc.js + webp_enc.wasm from same origin
+let _webpModule=null;
 let _webpLoadAttempted=false;
-let _webpErrors=[];
-
-async function _tryImport(url,label){
-  try{
-    const m=await import(url);
-    const fn=m.default||m.encode;
-    if(!fn)throw new Error("encode 함수 없음");
-    const test=new ImageData(new Uint8ClampedArray([255,0,0,255]),1,1);
-    const r=await fn(test,{quality:75});
-    if(!r||!r.byteLength)throw new Error("테스트 인코딩 결과 0바이트");
-    return fn;
-  }catch(e){
-    _webpErrors.push(label+": "+e.message);
-    return null;
-  }
-}
-
-async function _tryBlobImport(jsUrl,label){
-  // Fetch JS as text, create blob URL (same-origin) to bypass COEP
-  try{
-    const resp=await fetch(jsUrl,{mode:"cors"});
-    if(!resp.ok)throw new Error("fetch "+resp.status);
-    const text=await resp.text();
-    const blob=new Blob([text],{type:"application/javascript"});
-    const blobUrl=URL.createObjectURL(blob);
-    const m=await import(blobUrl);
-    URL.revokeObjectURL(blobUrl);
-    const fn=m.default||m.encode;
-    if(!fn)throw new Error("encode 함수 없음");
-    const test=new ImageData(new Uint8ClampedArray([255,0,0,255]),1,1);
-    const r=await fn(test,{quality:75});
-    if(!r||!r.byteLength)throw new Error("테스트 0바이트");
-    return fn;
-  }catch(e){
-    _webpErrors.push(label+": "+e.message);
-    return null;
-  }
-}
+let _webpError=null;
+const _webpDefaultOpts={quality:75,target_size:0,target_PSNR:0,method:4,sns_strength:50,filter_strength:60,
+  filter_sharpness:0,filter_type:1,partitions:0,segments:4,pass:1,show_compressed:0,preprocessing:0,
+  autofilter:0,partition_limit:0,alpha_compression:1,alpha_filtering:1,alpha_quality:100,lossless:0,
+  exact:0,image_hint:0,emulate_jpeg_size:0,thread_level:0,low_memory:0,near_lossless:100,
+  use_delta_palette:0,use_sharp_yuv:0};
 
 async function _loadWebpEncoder(){
-  _webpErrors=[];
-
-  // 1. Direct ESM import — encode sub-module
-  let fn=await _tryImport("https://esm.sh/@jsquash/webp@1.4.0/encode","1-esm.sh/encode");
-  if(fn){_webpEncodeFn=fn;return}
-
-  // 2. Direct ESM import — main module
-  fn=await _tryImport("https://esm.sh/@jsquash/webp@1.4.0","2-esm.sh/main");
-  if(fn){_webpEncodeFn=fn;return}
-
-  // 3. Blob URL approach (bypass COEP) — encode sub-module
-  fn=await _tryBlobImport("https://esm.sh/@jsquash/webp@1.4.0/encode","3-blob/encode");
-  if(fn){_webpEncodeFn=fn;return}
-
-  // 4. Older version
-  fn=await _tryImport("https://esm.sh/@jsquash/webp@1.2.0/encode","4-esm.sh/v1.2");
-  if(fn){_webpEncodeFn=fn;return}
-
-  // 5. jsdelivr
-  fn=await _tryImport("https://cdn.jsdelivr.net/npm/@jsquash/webp@1.4.0/+esm","5-jsdelivr");
-  if(fn){_webpEncodeFn=fn;return}
+  // Load Emscripten glue code from same origin (no require, no COEP issues)
+  const glue=await import("./webp_enc.js");
+  const factory=glue.default;
+  _webpModule=await factory({noInitialRun:true});
+  // Verify encode function exists
+  if(typeof _webpModule.encode!=="function")throw new Error("encode함수 없음");
 }
 
 async function wasmWebpBlob(canvas,quality=0.9){
-  if(!_webpEncodeFn&&!_webpLoadAttempted){
+  if(!_webpModule&&!_webpLoadAttempted){
     _webpLoadAttempted=true;
-    await _loadWebpEncoder();
+    try{await _loadWebpEncoder()}
+    catch(e){_webpError=e.message;console.error("WebP WASM 로드 실패:",e)}
   }
-  if(_webpEncodeFn){
+  if(_webpModule){
     try{
       const ctx=canvas.getContext("2d");
       const imageData=ctx.getImageData(0,0,canvas.width,canvas.height);
-      const buf=await _webpEncodeFn(imageData,{quality:Math.round(quality*100)});
-      return new Blob([buf],{type:"image/webp"});
-    }catch(e){_webpErrors.push("encode-runtime: "+e.message)}
+      const opts={..._webpDefaultOpts,quality:Math.round(quality*100)};
+      const result=_webpModule.encode(imageData.data,imageData.width,imageData.height,opts);
+      if(!result)throw new Error("인코딩 결과 없음");
+      return new Blob([result.buffer],{type:"image/webp"});
+    }catch(e){console.error("WebP encode:",e)}
   }
-  // Native fallback
+  // Native fallback (Chrome/Firefox)
   try{
     const blob=await new Promise(r=>canvas.toBlob(r,"image/webp",quality));
     if(blob&&blob.type==="image/webp")return blob;
   }catch{}
   return null;
 }
-window._webpDebug=()=>({fn:!!_webpEncodeFn,attempted:_webpLoadAttempted,errors:[..._webpErrors]});
 
 // Universal file save — iPad: native share sheet, Desktop: File System Access or <a> fallback
 async function saveBlob(blob,filename){
@@ -1006,8 +961,7 @@ const downloadImg=async()=>{
     const webpBlob=await wasmWebpBlob(cv,0.95);
     if(webpBlob){finalBlob=webpBlob}else{
       actualExt="png";
-      const errMsg="WebP 인코딩 실패 → PNG로 저장\n\n"+_webpErrors.map((e,i)=>(i+1)+". "+e).join("\n");
-      alert(errMsg);
+      tw("⚠ WebP 실패→PNG"+(_webpError?": "+_webpError:""));
     }
   }
   await saveBlob(finalBlob,`nai_${Date.now()}.${actualExt}`);
