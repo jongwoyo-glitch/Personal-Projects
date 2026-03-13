@@ -53,6 +53,12 @@ select option{background:#1a1a30;color:#ddd}
 .scroll-x{overflow-x:auto;-webkit-overflow-scrolling:touch;overscroll-behavior-x:contain}
 /* Touch-friendly buttons */
 .t-btn{min-width:44px;min-height:44px;display:inline-flex;align-items:center;justify-content:center}
+/* Canvas touch prevention */
+canvas{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
+/* Range slider iPad friendly */
+input[type="range"]{height:32px;-webkit-appearance:none;background:transparent;touch-action:none}
+input[type="range"]::-webkit-slider-thumb{-webkit-appearance:none;width:22px;height:22px;border-radius:50%;background:#785aff;border:2px solid rgba(255,255,255,.3);cursor:pointer}
+input[type="range"]::-webkit-slider-runnable-track{height:4px;background:rgba(120,90,255,.3);border-radius:2px}
 /* iPad portrait: narrower sidebar */
 @media(max-width:1024px){
   .sidebar{width:170px!important;min-width:170px!important}
@@ -1743,39 +1749,40 @@ return(
 </div>}
 
 {/* EDIT CANVAS */}
-{editMode&&editImg&&<div style={{position:"fixed",inset:0,zIndex:9999,background:"#0a0814",display:"flex",flexDirection:"column"}}>
+{editMode&&editImg&&<div style={{position:"fixed",inset:0,zIndex:9999,background:"#0a0814",display:"flex",flexDirection:"column",
+  paddingTop:"env(safe-area-inset-top)",paddingBottom:"env(safe-area-inset-bottom)",paddingLeft:"env(safe-area-inset-left)",paddingRight:"env(safe-area-inset-right)",overflow:"hidden"}}>
 {/* Toolbar - Edit Mode */}
 {editMode==="edit"&&<div style={{display:"flex",alignItems:"center",gap:6,padding:"6px 12px",background:"rgba(20,16,40,.95)",borderBottom:"1px solid rgba(90,180,255,.15)",flexShrink:0,flexWrap:"wrap"}}>
 <span style={{fontSize:12,fontWeight:700,color:"#5cb8ff"}}>✏️ 이미지 편집</span>
 {[["brush","🖌"],["eraser","🧹"],["eyedropper","💧"],["blur","🌫"]].map(([t,icon])=>
-<button key={t} onClick={()=>sEditTool(t)} style={{...Z.hB,fontSize:11,padding:"3px 8px",minWidth:36,
+<button key={t} onClick={()=>sEditTool(t)} style={{...Z.hB,fontSize:13,padding:"6px 10px",minWidth:44,minHeight:44,
   background:editTool===t?"rgba(90,180,255,.25)":"transparent",
   borderColor:editTool===t?"rgba(90,180,255,.4)":"rgba(255,255,255,.1)",
   color:editTool===t?"#5cb8ff":"#888"}}>{icon}</button>)}
 <div style={{width:1,height:20,background:"rgba(255,255,255,.08)"}}/>
-<div onClick={()=>sShowCW(true)} style={{width:24,height:24,borderRadius:4,background:editColor,cursor:"pointer",border:"2px solid rgba(255,255,255,.3)",flexShrink:0}} title="색상환 열기"/>
+<div onClick={()=>sShowCW(true)} style={{width:32,height:32,borderRadius:6,background:editColor,cursor:"pointer",border:"2px solid rgba(255,255,255,.3)",flexShrink:0}} title="색상환 열기"/>
 {["#ff0000","#ff8800","#ffee00","#00cc44","#0088ff","#aa44ff","#ffffff","#000000","#c97850","#ffccaa"].map(c=>
-<div key={c} onClick={()=>{sEditColor(c);sEditTool("brush")}} style={{width:16,height:16,borderRadius:2,background:c,cursor:"pointer",border:editColor===c?"2px solid #fff":"1px solid rgba(255,255,255,.15)",flexShrink:0}}/>)}
+<div key={c} onClick={()=>{sEditColor(c);sEditTool("brush")}} style={{width:28,height:28,borderRadius:4,background:c,cursor:"pointer",border:editColor===c?"2px solid #fff":"1px solid rgba(255,255,255,.15)",flexShrink:0}}/>)}
 <div style={{width:1,height:20,background:"rgba(255,255,255,.08)"}}/>
 <span style={{fontSize:9,color:"#888"}}>크기</span>
-<input type="range" min={1} max={100} value={editBrush} onChange={e=>sEditBrush(+e.target.value)} style={{width:60}}/>
+<input type="range" min={1} max={400} value={editBrush} onChange={e=>sEditBrush(+e.target.value)} style={{width:80}}/>
 <span style={{fontSize:9,color:"#aaa",fontFamily:"monospace",minWidth:18}}>{editBrush}</span>
 <span style={{fontSize:9,color:"#888"}}>투명</span>
-<input type="range" min={0.1} max={1} step={0.1} value={editOpacity} onChange={e=>sEditOpacity(+e.target.value)} style={{width:40}}/>
+<input type="range" min={0.1} max={1} step={0.1} value={editOpacity} onChange={e=>sEditOpacity(+e.target.value)} style={{width:60}}/>
 <span style={{fontSize:9,color:"#aaa",fontFamily:"monospace",minWidth:16}}>{editOpacity}</span>
 {editTool==="blur"&&<React.Fragment>
 <span style={{fontSize:9,color:"#888"}}>블러</span>
-<input type="range" min={2} max={10} value={editBlurStr} onChange={e=>sEditBlurStr(+e.target.value)} style={{width:40}}/>
+<input type="range" min={2} max={10} value={editBlurStr} onChange={e=>sEditBlurStr(+e.target.value)} style={{width:60}}/>
 <span style={{fontSize:9,color:"#aaa",fontFamily:"monospace",minWidth:12}}>{editBlurStr}</span>
 </React.Fragment>}
 <div style={{width:1,height:20,background:"rgba(255,255,255,.08)"}}/>
-<button onClick={editUndo} style={{...Z.hB,fontSize:10,padding:"3px 8px"}} title="Ctrl+Z">↩</button>
-<button onClick={editClear} style={{...Z.hB,fontSize:10,padding:"3px 8px",color:"#f66"}}>✕ 초기화</button>
+<button onClick={editUndo} style={{...Z.hB,fontSize:12,padding:"6px 12px",minHeight:44}} title="Ctrl+Z">↩</button>
+<button onClick={editClear} style={{...Z.hB,fontSize:12,padding:"6px 12px",minHeight:44,color:"#f66"}}>✕ 초기화</button>
 <span style={{fontSize:9,color:"#555"}}>{Math.round(editZoom*100)}%</span>
-<button onClick={()=>{sEditZoom(1);sEditPan({x:0,y:0})}} style={{...Z.hB,fontSize:9,padding:"2px 6px"}}>1:1</button>
+<button onClick={()=>{sEditZoom(1);sEditPan({x:0,y:0})}} style={{...Z.hB,fontSize:10,padding:"4px 8px",minHeight:44}}>1:1</button>
 <div style={{flex:1}}/>
-<button onClick={editApply} className="gen-btn" style={{fontSize:11,padding:"5px 14px",minHeight:32,background:"linear-gradient(135deg,#3388ff,#5cb8ff)"}}>✅ 적용 → Base</button>
-<button onClick={()=>{sEditMode(false);sEditSrc(null)}} style={{...Z.hB,fontSize:13,padding:"3px 8px",color:"#f66"}}>✕</button>
+<button onClick={editApply} className="gen-btn" style={{fontSize:12,padding:"6px 14px",minHeight:44,background:"linear-gradient(135deg,#3388ff,#5cb8ff)"}}>✅ 적용 → Base</button>
+<button onClick={()=>{sEditMode(false);sEditSrc(null)}} style={{...Z.hB,fontSize:14,padding:"6px 12px",minHeight:44,color:"#f66"}}>✕</button>
 </div>}
 
 {/* Toolbar - BG Remove Mode */}
@@ -1783,17 +1790,17 @@ return(
 <span style={{fontSize:12,fontWeight:700,color:"#8d8"}}>🔲 배경 제거</span>
 <div style={{width:1,height:20,background:"rgba(255,255,255,.08)"}}/>
 <span style={{fontSize:9,color:"#888"}}>브러시</span>
-<input type="range" min={5} max={100} value={editBrush} onChange={e=>sEditBrush(+e.target.value)} style={{width:80}}/>
+<input type="range" min={5} max={400} value={editBrush} onChange={e=>sEditBrush(+e.target.value)} style={{width:80}}/>
 <span style={{fontSize:9,color:"#aaa",fontFamily:"monospace",minWidth:18}}>{editBrush}</span>
-<button onClick={()=>sEditTool(editTool==="eraser"?"bgremove":"eraser")} style={{...Z.hB,fontSize:11,padding:"3px 8px",
+<button onClick={()=>sEditTool(editTool==="eraser"?"bgremove":"eraser")} style={{...Z.hB,fontSize:11,padding:"6px 12px",minHeight:44,
   background:editTool==="eraser"?"rgba(255,60,60,.2)":"rgba(100,200,100,.15)",
   color:editTool==="eraser"?"#f66":"#8d8"}}>{editTool==="eraser"?"🧹 지우기":"🖌 영역 선택"}</button>
-<button onClick={editUndo} style={{...Z.hB,fontSize:10,padding:"3px 8px"}} title="Ctrl+Z">↩</button>
-<button onClick={editClear} style={{...Z.hB,fontSize:10,padding:"3px 8px",color:"#f66"}}>✕ 초기화</button>
+<button onClick={editUndo} style={{...Z.hB,fontSize:12,padding:"6px 12px",minHeight:44}} title="Ctrl+Z">↩</button>
+<button onClick={editClear} style={{...Z.hB,fontSize:12,padding:"6px 12px",minHeight:44,color:"#f66"}}>✕ 초기화</button>
 <div style={{width:1,height:20,background:"rgba(255,255,255,.08)"}}/>
 <span style={{fontSize:9,color:"#aaa"}}>영역을 칠하면 부분 제거, 안 칠하면 전체 제거</span>
-{!bgRemoving&&<button onClick={()=>editBgRemove("local")} className="gen-btn" style={{fontSize:11,padding:"5px 14px",minHeight:32,background:"linear-gradient(135deg,#338844,#55bb77)"}}>🔲 배경 제거 (로컬·무료)</button>}
-{!bgRemoving&&se.apiToken&&<button onClick={()=>{if(!confirm("NAI API를 사용합니다.\nAnlas가 소모됩니다. 계속?"))return;editBgRemove("nai")}} style={{...Z.hB,fontSize:10,padding:"4px 10px",color:"#da5",borderColor:"rgba(255,180,60,.3)",background:"rgba(255,180,60,.1)"}}>NAI (Anlas)</button>}
+{!bgRemoving&&<button onClick={()=>editBgRemove("local")} className="gen-btn" style={{fontSize:11,padding:"6px 14px",minHeight:44,background:"linear-gradient(135deg,#338844,#55bb77)"}}>🔲 배경 제거 (로컬·무료)</button>}
+{!bgRemoving&&se.apiToken&&<button onClick={()=>{if(!confirm("NAI API를 사용합니다.\nAnlas가 소모됩니다. 계속?"))return;editBgRemove("nai")}} style={{...Z.hB,fontSize:10,padding:"6px 12px",minHeight:44,color:"#da5",borderColor:"rgba(255,180,60,.3)",background:"rgba(255,180,60,.1)"}}>NAI (Anlas)</button>}
 {bgRemoving&&<span style={{fontSize:10,color:"#5cb8ff",padding:"2px 8px",background:"rgba(90,180,255,.1)",borderRadius:4,display:"flex",alignItems:"center",gap:4}}><span className="spinner" style={{width:10,height:10,borderWidth:1.5,display:"inline-block"}}/> {bgProgress}</span>}
 <span style={{fontSize:9,color:"#555"}}>{Math.round(editZoom*100)}%</span>
 <div style={{flex:1}}/>
@@ -1806,7 +1813,7 @@ return(
   const a=document.createElement("a");a.href=URL.createObjectURL(blob);
   a.download="NAI_bgremoved_"+Date.now()+".png";a.click();
   tw("PNG 내보내기 완료");
-}} className="gen-btn" style={{fontSize:11,padding:"5px 14px",minHeight:32,background:"linear-gradient(135deg,#338844,#55bb77)"}}>💾 PNG</button>
+}} className="gen-btn" style={{fontSize:11,padding:"5px 14px",minHeight:44,background:"linear-gradient(135deg,#338844,#55bb77)"}}>💾 PNG</button>
 <button onClick={async()=>{
   const img=editImgRef.current;if(!img)return;
   const out=document.createElement("canvas");out.width=se.width;out.height=se.height;
@@ -1816,8 +1823,8 @@ return(
   const a=document.createElement("a");a.href=URL.createObjectURL(blob);
   a.download="NAI_bgremoved_"+Date.now()+".webp";a.click();
   tw("WebP 내보내기 완료");
-}} style={{...Z.hB,fontSize:11,padding:"5px 12px",minHeight:32,color:"#5cb8ff"}}>💾 WebP</button>
-<button onClick={()=>{sEditMode(false);sEditSrc(null)}} style={{...Z.hB,fontSize:13,padding:"3px 8px",color:"#f66"}}>✕</button>
+}} style={{...Z.hB,fontSize:11,padding:"5px 12px",minHeight:44,color:"#5cb8ff"}}>💾 WebP</button>
+<button onClick={()=>{sEditMode(false);sEditSrc(null)}} style={{...Z.hB,fontSize:14,padding:"6px 12px",minHeight:44,color:"#f66"}}>✕</button>
 </div>}
 {/* Main area: canvas + layers panel */}
 <div style={{flex:1,display:"flex",overflow:"hidden",minHeight:0}}>
@@ -1859,29 +1866,31 @@ backgroundImage:"repeating-conic-gradient(#333 0% 25%, #555 0% 50%)",backgroundS
 </div>}
 
 {/* INPAINT EDITOR */}
-{ipEdit&&baseImg&&<div style={{position:"fixed",inset:0,zIndex:9999,background:"#0a0814",display:"flex",flexDirection:"column"}}>
+{ipEdit&&baseImg&&<div style={{position:"fixed",inset:0,zIndex:9999,background:"#0a0814",display:"flex",flexDirection:"column",
+  paddingTop:"env(safe-area-inset-top)",paddingBottom:"env(safe-area-inset-bottom)",paddingLeft:"env(safe-area-inset-left)",paddingRight:"env(safe-area-inset-right)",overflow:"hidden"}}>
 {/* Toolbar */}
 <div style={{display:"flex",alignItems:"center",gap:10,padding:"8px 14px",background:"rgba(20,16,40,.95)",borderBottom:"1px solid rgba(120,90,255,.15)",flexShrink:0,flexWrap:"wrap"}}>
 <span style={{fontSize:13,fontWeight:700,color:"#c8b8ff"}}>🖌 인페인트 마스크</span>
 <div style={{display:"flex",alignItems:"center",gap:4}}>
 <span style={{fontSize:10,color:"#888"}}>브러시</span>
-<input type="range" min={16} max={200} step={8} value={ipBrush} onChange={e=>sIPB(+e.target.value)} style={{width:80}}/>
+<input type="range" min={16} max={400} step={8} value={ipBrush} onChange={e=>sIPB(+e.target.value)} style={{width:100}}/>
 <span style={{fontSize:10,color:"#aaa",fontFamily:"monospace",minWidth:24}}>{ipBrush}</span>
 </div>
-<button onClick={()=>sIPEr(p=>!p)} style={{...Z.hB,fontSize:11,padding:"4px 12px",background:ipErase?"rgba(255,60,60,.2)":"rgba(60,120,255,.2)",color:ipErase?"#f66":"#68f",borderColor:ipErase?"rgba(255,60,60,.3)":"rgba(60,120,255,.3)"}}>{ipErase?"🧹 지우개":"🖌 마스크"}</button>
-<button onClick={ipUndo} style={{...Z.hB,fontSize:11,padding:"4px 10px"}}>↩ 되돌리기</button>
-<button onClick={ipClear} style={{...Z.hB,fontSize:11,padding:"4px 10px",color:"#f66"}}>✕ 초기화</button>
+<button onClick={()=>sIPEr(p=>!p)} style={{...Z.hB,fontSize:11,padding:"6px 14px",minHeight:44,background:ipErase?"rgba(255,60,60,.2)":"rgba(60,120,255,.2)",color:ipErase?"#f66":"#68f",borderColor:ipErase?"rgba(255,60,60,.3)":"rgba(60,120,255,.3)"}}>{ipErase?"🧹 지우개":"🖌 마스크"}</button>
+<button onClick={ipUndo} style={{...Z.hB,fontSize:11,padding:"6px 12px",minHeight:44}}>↩ 되돌리기</button>
+<button onClick={ipClear} style={{...Z.hB,fontSize:11,padding:"6px 12px",minHeight:44,color:"#f66"}}>✕ 초기화</button>
 <div style={{flex:1}}/>
 <button onClick={applyIpMask} className="gen-btn" style={{fontSize:12,padding:"6px 16px",minHeight:36}}>✅ 마스크 적용</button>
 <button onClick={()=>sIPE(false)} style={{...Z.hB,fontSize:14,padding:"4px 10px",color:"#f66"}}>✕</button>
 </div>
 {/* Canvas area */}
-<div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",padding:10,minHeight:0}}>
+<div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",padding:10,minHeight:0,touchAction:"none"}} onContextMenu={e=>e.preventDefault()}>
 <div style={{position:"relative",maxWidth:"100%",maxHeight:"100%",aspectRatio:String(se.width/se.height)}}>
-<img ref={ipImgRef} src={baseImg} style={{width:"100%",height:"100%",objectFit:"contain",display:"block",borderRadius:4,userSelect:"none",WebkitUserSelect:"none"}} draggable={false}/>
-<canvas ref={ipCanvasRef} style={{position:"absolute",inset:0,width:"100%",height:"100%",cursor:"crosshair",touchAction:"none",borderRadius:4,opacity:0.5}}
+<img ref={ipImgRef} src={baseImg} style={{width:"100%",height:"100%",objectFit:"contain",display:"block",borderRadius:4,userSelect:"none",WebkitUserSelect:"none",WebkitTouchCallout:"none",pointerEvents:"none"}} draggable={false}/>
+<canvas ref={ipCanvasRef} style={{position:"absolute",inset:0,width:"100%",height:"100%",cursor:"crosshair",touchAction:"none",borderRadius:4,opacity:0.5,WebkitTouchCallout:"none",WebkitUserSelect:"none"}}
   onMouseDown={ipStartDraw} onMouseMove={ipDraw} onMouseUp={ipStopDraw} onMouseLeave={ipStopDraw}
-  onTouchStart={ipStartDraw} onTouchMove={ipDraw} onTouchEnd={ipStopDraw}/>
+  onTouchStart={ipStartDraw} onTouchMove={ipDraw} onTouchEnd={ipStopDraw}
+  onContextMenu={e=>e.preventDefault()}/>
 </div>
 </div>
 </div>}
