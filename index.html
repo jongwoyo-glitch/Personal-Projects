@@ -105,7 +105,7 @@ async function idbClear(){
   try{const db=await idbOpen();const tx=db.transaction(IDB_STORE,"readwrite");tx.objectStore(IDB_STORE).clear();await new Promise(r=>{tx.oncomplete=r});db.close()}catch(e){}
 }
 
-// WASM WebP encoder — loads webp_enc.js + webp_enc.wasm from same origin
+// WASM WebP encoder — fetch glue JS + WASM binary, bypass ESM import issues
 let _webpModule=null;
 let _webpLoadAttempted=false;
 let _webpError=null;
@@ -116,11 +116,28 @@ const _webpDefaultOpts={quality:75,target_size:0,target_PSNR:0,method:4,sns_stre
   use_delta_palette:0,use_sharp_yuv:0};
 
 async function _loadWebpEncoder(){
-  // Load Emscripten glue code from same origin (no require, no COEP issues)
-  const glue=await import("./webp_enc.js");
-  const factory=glue.default;
-  _webpModule=await factory({noInitialRun:true});
-  // Verify encode function exists
+  // 1. Fetch WASM binary
+  const wasmResp=await fetch("./webp_enc.wasm");
+  if(!wasmResp.ok)throw new Error("WASM fetch "+wasmResp.status);
+  const wasmBinary=await wasmResp.arrayBuffer();
+  
+  // 2. Fetch glue JS as text
+  const jsResp=await fetch("./webp_enc.js");
+  if(!jsResp.ok)throw new Error("JS fetch "+jsResp.status);
+  let jsText=await jsResp.text();
+  
+  // 3. Patch: replace import.meta.url with placeholder (not needed since we provide wasmBinary)
+  jsText=jsText.replace(/import\.meta\.url/g,'"about:blank"');
+  
+  // 4. Create blob URL and import as ESM
+  const blob=new Blob([jsText],{type:"text/javascript"});
+  const blobUrl=URL.createObjectURL(blob);
+  const mod=await import(blobUrl);
+  URL.revokeObjectURL(blobUrl);
+  
+  // 5. Init factory with wasmBinary injected (skips WASM fetch entirely)
+  const factory=mod.default;
+  _webpModule=await factory({noInitialRun:true,wasmBinary});
   if(typeof _webpModule.encode!=="function")throw new Error("encode함수 없음");
 }
 
@@ -128,7 +145,7 @@ async function wasmWebpBlob(canvas,quality=0.9){
   if(!_webpModule&&!_webpLoadAttempted){
     _webpLoadAttempted=true;
     try{await _loadWebpEncoder()}
-    catch(e){_webpError=e.message;console.error("WebP WASM 로드 실패:",e)}
+    catch(e){_webpError=e.message;console.error("WebP WASM:",e)}
   }
   if(_webpModule){
     try{
@@ -140,7 +157,7 @@ async function wasmWebpBlob(canvas,quality=0.9){
       return new Blob([result.buffer],{type:"image/webp"});
     }catch(e){console.error("WebP encode:",e)}
   }
-  // Native fallback (Chrome/Firefox)
+  // Native fallback
   try{
     const blob=await new Promise(r=>canvas.toBlob(r,"image/webp",quality));
     if(blob&&blob.type==="image/webp")return blob;
