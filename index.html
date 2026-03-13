@@ -1040,17 +1040,17 @@ const editStartDraw=(e)=>{
     const parent=editWrapRef.current?.parentElement;
     const pr=parent?.getBoundingClientRect();
     const t=e.touches?e.touches[0]:e;
-    const startX=t.clientX;
-    brushResizing.current={startX,startSize:editBrush};
-    sBrushPreview({x:t.clientX-(pr?.left||0),y:t.clientY-(pr?.top||0),size:editBrush});
+    const anchorX=t.clientX-(pr?.left||0);
+    const anchorY=t.clientY-(pr?.top||0);
+    brushResizing.current={startX:t.clientX,startSize:editBrush};
+    sBrushPreview({x:anchorX,y:anchorY,size:editBrush});
     const onMove=(ev)=>{
       ev.preventDefault&&ev.preventDefault();
       const p=ev.touches?ev.touches[0]:ev;
       if(!p)return;
       const dx=p.clientX-brushResizing.current.startX;
       const ns=Math.max(1,Math.min(400,brushResizing.current.startSize+Math.round(dx/2)));
-      const pr2=parent?.getBoundingClientRect();
-      sEditBrush(ns);sBrushPreview({x:p.clientX-(pr2?.left||0),y:p.clientY-(pr2?.top||0),size:ns});
+      sEditBrush(ns);sBrushPreview({x:anchorX,y:anchorY,size:ns});
     };
     const onUp=()=>{brushResizing.current=null;sBrushPreview(null);
       document.removeEventListener("mousemove",onMove);document.removeEventListener("mouseup",onUp);
