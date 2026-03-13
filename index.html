@@ -104,24 +104,59 @@ async function idbClear(){
   try{const db=await idbOpen();const tx=db.transaction(IDB_STORE,"readwrite");tx.objectStore(IDB_STORE).clear();await new Promise(r=>{tx.oncomplete=r});db.close()}catch(e){}
 }
 
-// WASM WebP encoder (lazy-loaded via @jsquash/webp)
-let _webpEncode=null;
+// WASM WebP encoder — multiple strategies for cross-browser CDN compatibility
+let _webpEncodeFn=null;
+let _webpLoadError=null;
+async function _loadWebpEncoder(){
+  // Strategy 1: esm.sh (recommended by jSquash — handles WASM bundling internally)
+  try{
+    const m=await import("https://esm.sh/@jsquash/webp@1.4.0");
+    if(m.encode){
+      // Test encode with tiny 1x1 image
+      const test=new ImageData(1,1);
+      const r=await m.encode(test,{quality:50});
+      if(r&&r.byteLength>0){_webpEncodeFn=m.encode;return}
+    }
+  }catch(e){console.warn("esm.sh strategy failed:",e)}
+
+  // Strategy 2: jsdelivr ESM + manual WASM fetch + init
+  try{
+    const m=await import("https://cdn.jsdelivr.net/npm/@jsquash/webp@1.4.0/+esm");
+    if(m.init){
+      const wasmR=await fetch("https://cdn.jsdelivr.net/npm/@jsquash/webp@1.4.0/codec/enc/webp_enc.wasm",{mode:"cors"});
+      if(wasmR.ok){
+        const buf=await wasmR.arrayBuffer();
+        await m.init(buf);
+      }
+    }
+    if(m.encode){
+      const test=new ImageData(1,1);
+      const r=await m.encode(test,{quality:50});
+      if(r&&r.byteLength>0){_webpEncodeFn=m.encode;return}
+    }
+  }catch(e){console.warn("jsdelivr strategy failed:",e)}
+
+  throw new Error("WebP WASM 로딩 실패 — 모든 CDN에서 실패");
+}
+
 async function wasmWebpBlob(canvas,quality=0.9){
   try{
-    if(!_webpEncode){
-      const m=await import("https://cdn.jsdelivr.net/npm/@jsquash/webp@1.5.0/+esm");
-      _webpEncode=m.encode;
+    if(!_webpEncodeFn){
+      if(_webpLoadError)throw _webpLoadError;
+      try{await _loadWebpEncoder()}catch(e){_webpLoadError=e;throw e}
     }
     const ctx=canvas.getContext("2d");
     const imageData=ctx.getImageData(0,0,canvas.width,canvas.height);
-    const buf=await _webpEncode(imageData,{quality:Math.round(quality*100)});
+    const buf=await _webpEncodeFn(imageData,{quality:Math.round(quality*100)});
     return new Blob([buf],{type:"image/webp"});
   }catch(e){
-    console.warn("WASM WebP encode failed, trying native:",e);
-    // Fallback: try native toBlob (works on Chrome/Firefox, fails on Safari)
-    const blob=await new Promise(r=>canvas.toBlob(r,"image/webp",quality));
-    if(blob&&blob.type==="image/webp")return blob;
-    return null; // caller handles PNG fallback
+    console.error("WebP encode:",e);
+    // Last resort: native toBlob
+    try{
+      const blob=await new Promise(r=>canvas.toBlob(r,"image/webp",quality));
+      if(blob&&blob.type==="image/webp")return blob;
+    }catch{}
+    return null;
   }
 }
 
@@ -911,7 +946,7 @@ const downloadImg=async()=>{
     const cv=document.createElement("canvas");cv.width=img.width;cv.height=img.height;
     cv.getContext("2d").drawImage(img,0,0);URL.revokeObjectURL(url);
     const webpBlob=await wasmWebpBlob(cv,0.95);
-    if(webpBlob){finalBlob=webpBlob}else{actualExt="png"}
+    if(webpBlob){finalBlob=webpBlob}else{actualExt="png";tw("⚠ WebP 인코딩 실패 → PNG 저장")}
   }
   await saveBlob(finalBlob,`nai_${Date.now()}.${actualExt}`);
 };
