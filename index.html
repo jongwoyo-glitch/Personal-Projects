@@ -1033,17 +1033,20 @@ const editStartDraw=(e)=>{
   // Ctrl+Alt drag = brush resize (mouse + touch/pencil)
   if((e.ctrlKey||e.metaKey)&&e.altKey){
     e.preventDefault();
-    const r=editWrapRef.current?.getBoundingClientRect();
+    const parent=editWrapRef.current?.parentElement;
+    const pr=parent?.getBoundingClientRect();
     const t=e.touches?e.touches[0]:e;
     const startX=t.clientX;
     brushResizing.current={startX,startSize:editBrush};
-    sBrushPreview({x:startX-(r?.left||0),y:t.clientY-(r?.top||0),size:editBrush});
+    sBrushPreview({x:t.clientX-(pr?.left||0),y:t.clientY-(pr?.top||0),size:editBrush});
     const onMove=(ev)=>{
+      ev.preventDefault&&ev.preventDefault();
       const p=ev.touches?ev.touches[0]:ev;
       if(!p)return;
       const dx=p.clientX-brushResizing.current.startX;
       const ns=Math.max(1,Math.min(400,brushResizing.current.startSize+Math.round(dx/2)));
-      sEditBrush(ns);sBrushPreview(p2=>p2?{...p2,size:ns}:null);
+      const pr2=parent?.getBoundingClientRect();
+      sEditBrush(ns);sBrushPreview({x:p.clientX-(pr2?.left||0),y:p.clientY-(pr2?.top||0),size:ns});
     };
     const onUp=()=>{brushResizing.current=null;sBrushPreview(null);
       document.removeEventListener("mousemove",onMove);document.removeEventListener("mouseup",onUp);
@@ -1872,15 +1875,24 @@ return(
 <span style={{fontSize:9,color:"#888"}}>브러시</span>
 <input type="range" min={5} max={400} value={editBrush} onChange={e=>sEditBrush(+e.target.value)} style={{width:80}}/>
 <span style={{fontSize:9,color:"#aaa",fontFamily:"monospace",minWidth:18}}>{editBrush}</span>
-<button onClick={()=>sEditTool(editTool==="eraser"?"bgremove":"eraser")} style={{...Z.hB,fontSize:11,padding:"6px 12px",minHeight:44,
-  background:editTool==="eraser"?"rgba(255,60,60,.2)":"rgba(100,200,100,.15)",
-  color:editTool==="eraser"?"#f66":"#8d8"}}>{editTool==="eraser"?"🧹 지우기":"🖌 영역 선택"}</button>
+<button onClick={()=>sEditTool("bgremove")} style={{...Z.hB,fontSize:11,padding:"6px 12px",minHeight:44,
+  background:editTool==="bgremove"?"rgba(100,200,100,.25)":"transparent",
+  borderColor:editTool==="bgremove"?"rgba(100,200,100,.4)":"rgba(255,255,255,.1)",
+  color:editTool==="bgremove"?"#8d8":"#888"}}>🖌 마스크</button>
+<button onClick={()=>sEditTool("eraser")} style={{...Z.hB,fontSize:11,padding:"6px 12px",minHeight:44,
+  background:editTool==="eraser"?"rgba(255,60,60,.2)":"transparent",
+  borderColor:editTool==="eraser"?"rgba(255,60,60,.3)":"rgba(255,255,255,.1)",
+  color:editTool==="eraser"?"#f66":"#888"}}>🧹 지우개</button>
 <button onClick={()=>sBgReverse(p=>!p)} style={{...Z.hB,fontSize:11,padding:"6px 12px",minHeight:44,
   background:bgReverse?"rgba(255,180,60,.2)":"transparent",
   borderColor:bgReverse?"rgba(255,180,60,.4)":"rgba(255,255,255,.1)",
   color:bgReverse?"#fa5":"#888"}}>{bgReverse?"🛡 보존":"🎯 제거"}</button>
 <button onClick={editUndo} style={{...Z.hB,fontSize:12,padding:"6px 12px",minHeight:44}} title="Ctrl+Z">↩</button>
 <button onClick={editClear} style={{...Z.hB,fontSize:12,padding:"6px 12px",minHeight:44,color:"#f66"}}>✕ 초기화</button>
+<button onClick={()=>sPencilOnly(p=>!p)} style={{...Z.hB,fontSize:11,padding:"6px 10px",minHeight:44,
+  background:pencilOnly?"rgba(255,180,60,.2)":"transparent",
+  borderColor:pencilOnly?"rgba(255,180,60,.4)":"rgba(255,255,255,.1)",
+  color:pencilOnly?"#fa5":"#666"}} title="Apple Pencil 전용 모드">{pencilOnly?"✏️ 펜슬":"👆 터치"}</button>
 <div style={{width:1,height:20,background:"rgba(255,255,255,.08)"}}/>
 <span style={{fontSize:9,color:"#aaa"}}>{bgReverse?"칠한 영역 보존, 나머지 배경 제거":"칠한 영역 배경 제거, 안 칠하면 전체 제거"}</span>
 {!bgRemoving&&<button onClick={()=>editBgRemove("local")} className="gen-btn" style={{fontSize:11,padding:"6px 14px",minHeight:44,background:"linear-gradient(135deg,#338844,#55bb77)"}}>🔲 배경 제거 (로컬·무료)</button>}
@@ -1924,9 +1936,9 @@ backgroundImage:"repeating-conic-gradient(#333 0% 25%, #555 0% 50%)",backgroundS
   onMouseDown={editStartDraw}
   onContextMenu={e=>e.preventDefault()}
   onTouchStart={editTouchStart} onTouchMove={editTouchMove} onTouchEnd={editTouchEnd}/>
-{/* Brush resize preview circle */}
-{brushPreview&&<div style={{position:"absolute",left:brushPreview.x-brushPreview.size/2*editZoom,top:brushPreview.y-brushPreview.size/2*editZoom,width:brushPreview.size*editZoom,height:brushPreview.size*editZoom,borderRadius:"50%",border:"2px solid rgba(255,255,255,.7)",pointerEvents:"none",boxShadow:"0 0 0 1px rgba(0,0,0,.4)"}}/>}
 </div>
+{/* Brush resize preview circle - outside transformed wrapper, screen-space coords */}
+{brushPreview&&<div style={{position:"absolute",left:brushPreview.x-brushPreview.size/2*editZoom,top:brushPreview.y-brushPreview.size/2*editZoom,width:brushPreview.size*editZoom,height:brushPreview.size*editZoom,borderRadius:"50%",border:"2px solid rgba(255,255,255,.7)",pointerEvents:"none",boxShadow:"0 0 0 1px rgba(0,0,0,.4)",zIndex:10}}/>}
 </div>
 {/* Layers panel - only in edit mode */}
 {editMode==="edit"&&<div style={{width:140,borderLeft:"1px solid rgba(90,180,255,.1)",background:"rgba(10,8,20,.6)",display:"flex",flexDirection:"column",flexShrink:0}}>
