@@ -43,10 +43,13 @@ select option{background:#1a1a30;color:#ddd}
 @keyframes loadbar{0%{left:-40%;width:40%}50%{left:20%;width:60%}100%{left:100%;width:40%}}
 .gen-loadbar{position:fixed;top:0;left:0;right:0;height:3px;z-index:9999;overflow:hidden;background:rgba(120,90,255,.1)}
 .gen-loadbar::after{content:'';position:absolute;top:0;height:100%;background:linear-gradient(90deg,#785aff,#ff6b9d);animation:loadbar 1.5s ease-in-out infinite}
-.resizer{width:6px;cursor:col-resize;background:transparent;flex-shrink:0;position:relative;z-index:10;touch-action:none}
-.resizer:hover,.resizer:active{background:rgba(120,90,255,.15)}
-.resizer::after{content:'';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:2px;height:32px;background:rgba(255,255,255,.12);border-radius:1px}
-.resizer:hover::after,.resizer:active::after{background:rgba(120,90,255,.5)}
+.resizer{width:20px;cursor:col-resize;background:transparent;flex-shrink:0;position:relative;z-index:10;touch-action:none;margin:0 -7px}
+.resizer:hover,.resizer:active{background:rgba(120,90,255,.06)}
+.resizer::after{content:'';position:absolute;top:0;left:50%;transform:translateX(-50%);width:2px;height:100%;background:rgba(255,255,255,.06);border-radius:1px}
+.resizer:hover::after,.resizer:active::after{background:rgba(120,90,255,.4)}
+.rz-handle{position:absolute;top:0;left:50%;transform:translateX(-50%);width:20px;height:36px;background:rgba(120,90,255,.2);border-radius:0 0 8px 8px;cursor:col-resize;display:flex;align-items:center;justify-content:center;touch-action:none}
+.rz-handle:hover,.rz-handle:active{background:rgba(120,90,255,.5)}
+.rz-handle::after{content:'⋮';color:rgba(255,255,255,.45);font-size:13px;font-weight:700;line-height:1}
 .spinner{width:16px;height:16px;border:2px solid rgba(120,90,255,.2);border-top-color:#785aff;border-radius:50%;animation:spin .8s linear infinite;display:inline-block}
 /* Scrollable panels - iOS momentum */
 .scroll-y{overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
@@ -650,7 +653,7 @@ const onResizeStart=(panel,e)=>{
   document.addEventListener("touchmove",onMove,{passive:false});document.addEventListener("touchend",onUp);
   document.body.style.cursor="col-resize";document.body.style.userSelect="none";
 };
-const Rz=({panel})=><div className="resizer" onMouseDown={e=>onResizeStart(panel,e)} onTouchStart={e=>onResizeStart(panel,e)}/>;
+const Rz=({panel})=><div className="resizer" onMouseDown={e=>onResizeStart(panel,e)} onTouchStart={e=>onResizeStart(panel,e)}><div className="rz-handle" onMouseDown={e=>onResizeStart(panel,e)} onTouchStart={e=>onResizeStart(panel,e)}/></div>;
 const[anlas,sAnlas]=useState(null); // {anlas, tier, active}
 const[history,sHistory]=useState(()=>ll("nai-pb-hist",[]));
 const[page,sPage]=useState("gen");
@@ -691,7 +694,9 @@ const[editMode,sEditMode]=useState(false); // false | "edit" | "bgremove"
 const[editSrc,sEditSrc]=useState(null); // source image for editor (genImg or history)
 const[editBrush,sEditBrush]=useState(20);
 const[editColor,sEditColor]=useState("#ff0000");
+const[editTransparent,sEditTransparent]=useState(false); // transparent brush mode
 const[editTool,sEditTool]=useState("brush"); // brush|eraser|eyedropper|blur|wand
+const prevEditTool=useRef("brush"); // tool before wand
 const[editOpacity,sEditOpacity]=useState(1);
 const[pencilOnly,sPencilOnly]=useState(false); // Apple Pencil only mode
 const[editBlurStr,sEditBlurStr]=useState(4);
@@ -1080,9 +1085,12 @@ const compositeEdit=()=>{
   });
   // Show stroke preview while drawing (with target opacity)
   if(editStrokeCanvas.current&&editDrawing.current){
+    if(editTransparent&&editTool!=="bgremove"){
+      ctx.globalCompositeOperation="destination-out";
+    }
     ctx.globalAlpha=(editTool==="bgremove")?0.35:editOpacity;
     ctx.drawImage(editStrokeCanvas.current,0,0);
-    ctx.globalAlpha=1;
+    ctx.globalAlpha=1;ctx.globalCompositeOperation="source-over";
   }
   // Selection mask overlay: darken non-selected areas
   if(editSel){
@@ -1135,6 +1143,8 @@ useEffect(()=>{
 },[editMode,editShortcuts,shortcutModal]);
 // Clear shortcut modal when leaving edit mode
 useEffect(()=>{if(editMode!=="edit")sShortcutModal(null)},[editMode]);
+// Track last non-wand tool for wand confirm
+useEffect(()=>{if(editTool!=="wand")prevEditTool.current=editTool},[editTool]);
 
 const getActiveCanvas=()=>editLayerCanvases.current[editActiveLayer]||null;
 
@@ -1198,7 +1208,7 @@ const doWandSelect=(px,py)=>{
   editSelPath.current=path;
 };
 
-// Fill selection with current color
+// Fill selection with current color (or clear if transparent)
 const fillSelection=()=>{
   if(!editSel)return;
   const acv=getActiveCanvas();if(!acv)return;
@@ -1207,19 +1217,27 @@ const fillSelection=()=>{
   const w=se.width,h=se.height;
   const imgd=ctx.getImageData(0,0,w,h);
   const dd=imgd.data;
-  // Parse hex color
-  const hex=editColor.replace("#","");
-  const cr=parseInt(hex.slice(0,2),16),cg=parseInt(hex.slice(2,4),16),cb=parseInt(hex.slice(4,6),16);
-  const alpha=Math.round(editOpacity*255);
-  for(let i=0;i<w*h;i++){
-    if(editSel[i]){
-      const p=i*4;
-      // Alpha compositing
-      const sa=alpha/255;
-      dd[p]=Math.round(dd[p]*(1-sa)+cr*sa);
-      dd[p+1]=Math.round(dd[p+1]*(1-sa)+cg*sa);
-      dd[p+2]=Math.round(dd[p+2]*(1-sa)+cb*sa);
-      dd[p+3]=Math.min(255,dd[p+3]+alpha);
+  if(editTransparent){
+    // Transparent fill: reduce alpha by opacity amount
+    const removeAlpha=Math.round(editOpacity*255);
+    for(let i=0;i<w*h;i++){
+      if(editSel[i]){dd[i*4+3]=Math.max(0,dd[i*4+3]-removeAlpha)}
+    }
+  }else{
+    // Parse hex color
+    const hex=editColor.replace("#","");
+    const cr=parseInt(hex.slice(0,2),16),cg=parseInt(hex.slice(2,4),16),cb=parseInt(hex.slice(4,6),16);
+    const alpha=Math.round(editOpacity*255);
+    for(let i=0;i<w*h;i++){
+      if(editSel[i]){
+        const p=i*4;
+        // Alpha compositing
+        const sa=alpha/255;
+        dd[p]=Math.round(dd[p]*(1-sa)+cr*sa);
+        dd[p+1]=Math.round(dd[p+1]*(1-sa)+cg*sa);
+        dd[p+2]=Math.round(dd[p+2]*(1-sa)+cb*sa);
+        dd[p+3]=Math.min(255,dd[p+3]+alpha);
+      }
     }
   }
   ctx.putImageData(imgd,0,0);
@@ -1246,7 +1264,7 @@ const doEyedrop=(e)=>{
   editLayers.forEach(l=>{if(l.visible){const lcv=editLayerCanvases.current[l.id];if(lcv)tctx.drawImage(lcv,0,0)}});
   const px=tctx.getImageData(Math.max(0,Math.min(se.width-1,Math.round(x))),Math.max(0,Math.min(se.height-1,Math.round(y))),1,1).data;
   const hex="#"+[px[0],px[1],px[2]].map(v=>v.toString(16).padStart(2,"0")).join("");
-  sEditColor(hex);tw("색상 추출: "+hex);
+  sEditColor(hex);sEditTransparent(false);tw("색상 추출: "+hex);
 };
 
 const editStartDraw=(e)=>{
@@ -1352,7 +1370,8 @@ const editDoDraw=(e)=>{
       const sp=editSelPath.current;
       if(sp){sctx.save();sctx.clip(sp)}
       sctx.globalCompositeOperation="source-over";sctx.globalAlpha=1;
-      sctx.strokeStyle=editColor;sctx.fillStyle=editColor;
+      const bCol=editTransparent?"#ffffff":editColor;
+      sctx.strokeStyle=bCol;sctx.fillStyle=bCol;
       sctx.lineWidth=editBrush;sctx.lineCap="round";sctx.lineJoin="round";
       if(editLastPos.current){sctx.beginPath();sctx.moveTo(editLastPos.current.x,editLastPos.current.y);sctx.lineTo(x,y);sctx.stroke()}
       else{sctx.beginPath();sctx.arc(x,y,editBrush/2,0,Math.PI*2);sctx.fill()}
@@ -1372,10 +1391,10 @@ const editStopDraw=()=>{
     const acv=getActiveCanvas();
     if(acv){
       const ctx=acv.getContext("2d");
-      ctx.globalCompositeOperation="source-over";
+      ctx.globalCompositeOperation=(editTransparent&&editTool!=="bgremove")?"destination-out":"source-over";
       ctx.globalAlpha=(editTool==="bgremove")?0.35:editOpacity;
       ctx.drawImage(editStrokeCanvas.current,0,0);
-      ctx.globalAlpha=1;
+      ctx.globalAlpha=1;ctx.globalCompositeOperation="source-over";
     }
     // Clear stroke canvas
     editStrokeCanvas.current.getContext("2d").clearRect(0,0,editStrokeCanvas.current.width,editStrokeCanvas.current.height);
@@ -2096,6 +2115,7 @@ return(
   color:wandContig?"#5cb8ff":"#fa5"}}>{wandContig?"인접":"전체"}</button>
 <button onClick={fillSelection} style={{...Z.hB,fontSize:11,padding:"4px 10px",minHeight:32,color:"#8d8",borderColor:"rgba(100,200,100,.3)"}} title="선택 영역 채우기">🪣</button>
 <button onClick={()=>{sEditSel(null);editSelPath.current=null}} style={{...Z.hB,fontSize:9,padding:"4px 8px",minHeight:32,color:"#f88",borderColor:"rgba(255,100,100,.3)"}} title="선택 해제">{editSel?"✕ 해제":"—"}</button>
+<button onClick={()=>{sEditSel(null);editSelPath.current=null;sEditTool(prevEditTool.current||"brush")}} style={{...Z.hB,fontSize:10,padding:"4px 10px",minHeight:32,color:"#5cb8ff",borderColor:"rgba(90,180,255,.3)",background:"rgba(90,180,255,.12)"}} title="선택 확정 후 이전 도구로 복귀">✅ 확정</button>
 </React.Fragment>}
 <div style={{width:1,height:20,background:"rgba(255,255,255,.08)"}}/>
 <button onClick={editUndo} style={{...Z.hB,fontSize:12,padding:"6px 12px",minHeight:44}} title="Ctrl+Z">↩</button>
@@ -2158,7 +2178,7 @@ return(
 {/* Main area: canvas + layers panel */}
 <div style={{flex:1,display:"flex",overflow:"hidden",minHeight:0}}>
 {/* Color Wheel */}
-{editMode==="edit"&&showCW&&<React.Fragment><div style={{position:"fixed",inset:0,zIndex:10000}} onClick={()=>sShowCW(false)}/><ColorWheel color={editColor} onChange={c=>sEditColor(c)} onClose={()=>sShowCW(false)}/></React.Fragment>}
+{editMode==="edit"&&showCW&&<React.Fragment><div style={{position:"fixed",inset:0,zIndex:10000}} onClick={()=>sShowCW(false)}/><ColorWheel color={editColor} onChange={c=>{sEditColor(c);sEditTransparent(false)}} onClose={()=>sShowCW(false)}/></React.Fragment>}
 {/* Shortcut capture modal */}
 {shortcutModal&&<React.Fragment>
 <div style={{position:"fixed",inset:0,zIndex:10001,background:"rgba(0,0,0,.4)"}} onClick={()=>sShortcutModal(null)}/>
@@ -2201,10 +2221,19 @@ return(
   {editShortcuts[t]&&<span style={{position:"absolute",top:1,right:1,fontSize:7,background:"rgba(90,180,255,.35)",color:"#cde",borderRadius:2,padding:"0 2px",lineHeight:"11px",fontFamily:"monospace"}}>{editShortcuts[t].toUpperCase()}</span>}
 </button>)}
 <div style={{width:32,height:1,background:"rgba(255,255,255,.08)",margin:"2px 0"}}/>
-<div onClick={()=>sShowCW(true)} style={{width:36,height:36,borderRadius:6,background:editColor,cursor:"pointer",border:"2px solid rgba(255,255,255,.3)",flexShrink:0}} title="색상환 열기"/>
+<div style={{display:"flex",gap:3,alignItems:"center",justifyContent:"center"}}>
+<div onClick={()=>sShowCW(true)} style={{width:32,height:32,borderRadius:6,background:editTransparent?"transparent":editColor,cursor:"pointer",border:editTransparent?"2px solid rgba(255,255,255,.15)":"2px solid rgba(255,255,255,.3)",flexShrink:0,
+  backgroundImage:editTransparent?"repeating-conic-gradient(#444 0% 25%, #666 0% 50%)":"none",backgroundSize:"8px 8px"}} title="색상환 열기"/>
+<div onClick={()=>{sEditTransparent(true);sEditTool("brush")}} style={{width:32,height:32,borderRadius:6,cursor:"pointer",flexShrink:0,
+  border:editTransparent?"2px solid #f88":"2px solid rgba(255,255,255,.15)",
+  backgroundImage:"repeating-conic-gradient(#444 0% 25%, #666 0% 50%)",backgroundSize:"8px 8px",
+  display:"flex",alignItems:"center",justifyContent:"center"}}>
+<span style={{fontSize:8,color:"#f88",fontWeight:700,textShadow:"0 1px 2px #000"}}>투명</span>
+</div>
+</div>
 <div style={{display:"flex",flexWrap:"wrap",gap:2,justifyContent:"center",padding:"0 2px"}}>
 {["#ff0000","#ff8800","#ffee00","#00cc44","#0088ff","#aa44ff","#ffffff","#000000","#c97850","#ffccaa"].map(c=>
-<div key={c} onClick={()=>{sEditColor(c);sEditTool("brush")}} style={{width:22,height:22,borderRadius:3,background:c,cursor:"pointer",border:editColor===c?"2px solid #fff":"1px solid rgba(255,255,255,.15)",flexShrink:0}}/>)}
+<div key={c} onClick={()=>{sEditColor(c);sEditTransparent(false);sEditTool("brush")}} style={{width:22,height:22,borderRadius:3,background:c,cursor:"pointer",border:editColor===c&&!editTransparent?"2px solid #fff":"1px solid rgba(255,255,255,.15)",flexShrink:0}}/>)}
 </div>
 </div>}
 {/* Left Sidebar - BG Remove Tools */}
@@ -2223,22 +2252,8 @@ return(
   borderColor:bgReverse?"rgba(255,180,60,.4)":"rgba(255,255,255,.1)",
   color:bgReverse?"#fa5":"#888"}}>{bgReverse?"🛡":"🎯"}</button>
 </div>}
-{/* Canvas area with zoom/pan */}
-<div style={{flex:1,overflow:"hidden",position:"relative",display:"flex",alignItems:"center",justifyContent:"center"}} onWheel={editWheel}>
-<div ref={editWrapRef} style={{position:"relative",transform:`scale(${editZoom}) translate(${editPan.x/editZoom}px,${editPan.y/editZoom}px)`,transformOrigin:"center center",transition:editPinch.current?"none":"transform 0.1s",aspectRatio:String(se.width/se.height),maxWidth:"90%",maxHeight:"90%",
-backgroundImage:"repeating-conic-gradient(#333 0% 25%, #555 0% 50%)",backgroundSize:"16px 16px"}}>
-<img ref={editImgRef} src={editImg} style={{width:"100%",height:"100%",objectFit:"contain",display:"block",userSelect:"none",WebkitUserSelect:"none"}} draggable={false}/>
-<canvas ref={editCanvasRef} style={{position:"absolute",inset:0,width:"100%",height:"100%",
-  cursor:editTool==="eyedropper"?"crosshair":editTool==="blur"?"cell":editTool==="bgremove"?"crosshair":editTool==="wand"?"crosshair":"default",touchAction:"none"}}
-  onMouseDown={editStartDraw}
-  onContextMenu={e=>e.preventDefault()}
-  onTouchStart={editTouchStart} onTouchMove={editTouchMove} onTouchEnd={editTouchEnd}/>
-</div>
-{/* Brush resize preview circle - outside transformed wrapper, screen-space coords */}
-{brushPreview&&<div style={{position:"absolute",left:brushPreview.x-brushPreview.size/2*editZoom,top:brushPreview.y-brushPreview.size/2*editZoom,width:brushPreview.size*editZoom,height:brushPreview.size*editZoom,borderRadius:"50%",border:"2px solid rgba(255,255,255,.7)",pointerEvents:"none",boxShadow:"0 0 0 1px rgba(0,0,0,.4)",zIndex:10}}/>}
-</div>
-{/* Layers panel - only in edit mode */}
-{editMode==="edit"&&<div style={{width:140,borderLeft:"1px solid rgba(90,180,255,.1)",background:"rgba(10,8,20,.6)",display:"flex",flexDirection:"column",flexShrink:0}}>
+{/* Layers panel - between tools and canvas */}
+{editMode==="edit"&&<div style={{width:140,borderRight:"1px solid rgba(90,180,255,.1)",background:"rgba(10,8,20,.6)",display:"flex",flexDirection:"column",flexShrink:0}}>
 <div style={{padding:"6px 8px",borderBottom:"1px solid rgba(90,180,255,.08)",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
 <span style={{fontSize:10,fontWeight:700,color:"#5cb8ff"}}>레이어</span>
 <button onClick={()=>addEditLayer()} style={{...Z.pB,width:20,height:20,fontSize:10}}>+</button>
@@ -2255,6 +2270,20 @@ backgroundImage:"repeating-conic-gradient(#333 0% 25%, #555 0% 50%)",backgroundS
 </div>))}
 </div>
 </div>}
+{/* Canvas area with zoom/pan */}
+<div style={{flex:1,overflow:"hidden",position:"relative",display:"flex",alignItems:"center",justifyContent:"center"}} onWheel={editWheel}>
+<div ref={editWrapRef} style={{position:"relative",transform:`scale(${editZoom}) translate(${editPan.x/editZoom}px,${editPan.y/editZoom}px)`,transformOrigin:"center center",transition:editPinch.current?"none":"transform 0.1s",aspectRatio:String(se.width/se.height),maxWidth:"90%",maxHeight:"90%",
+backgroundImage:"repeating-conic-gradient(#333 0% 25%, #555 0% 50%)",backgroundSize:"16px 16px"}}>
+<img ref={editImgRef} src={editImg} style={{width:"100%",height:"100%",objectFit:"contain",display:"block",userSelect:"none",WebkitUserSelect:"none"}} draggable={false}/>
+<canvas ref={editCanvasRef} style={{position:"absolute",inset:0,width:"100%",height:"100%",
+  cursor:editTool==="eyedropper"?"crosshair":editTool==="blur"?"cell":editTool==="bgremove"?"crosshair":editTool==="wand"?"crosshair":"default",touchAction:"none"}}
+  onMouseDown={editStartDraw}
+  onContextMenu={e=>e.preventDefault()}
+  onTouchStart={editTouchStart} onTouchMove={editTouchMove} onTouchEnd={editTouchEnd}/>
+</div>
+{/* Brush resize preview circle - outside transformed wrapper, screen-space coords */}
+{brushPreview&&<div style={{position:"absolute",left:brushPreview.x-brushPreview.size/2*editZoom,top:brushPreview.y-brushPreview.size/2*editZoom,width:brushPreview.size*editZoom,height:brushPreview.size*editZoom,borderRadius:"50%",border:"2px solid rgba(255,255,255,.7)",pointerEvents:"none",boxShadow:"0 0 0 1px rgba(0,0,0,.4)",zIndex:10}}/>}
+</div>
 </div>
 </div>}
 
