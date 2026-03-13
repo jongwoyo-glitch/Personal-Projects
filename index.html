@@ -257,12 +257,9 @@ async function generateImage(token,se,basePos,baseNeg,charPrompts,vibeRefs,i2iOp
     width:se.width,height:se.height,scale:se.scale,sampler:se.sampler,steps:se.steps,
     seed:seed,n_samples:1,ucPreset:0,qualityToggle:true,
     sm:se.smea||false,sm_dyn:se.smeaDyn||false,
-    autoSmea:false,
     dynamic_thresholding:false,controlnet_strength:1,legacy:false,
     add_original_image:true,cfg_rescale:0,noise_schedule:"karras",
-    legacy_v3_extend:false,legacy_uc:false,skip_cfg_above_sigma:null,
-    deliberate_euler_ancestral_bug:false,prefer_brownian:true,
-    normalize_reference_strength_multiple:true,
+    legacy_v3_extend:false,skip_cfg_above_sigma:null,
     use_coords:false,
     characterPrompts:[],
     v4_prompt:{
@@ -270,7 +267,7 @@ async function generateImage(token,se,basePos,baseNeg,charPrompts,vibeRefs,i2iOp
       use_coords:false,use_order:true
     },
     v4_negative_prompt:{
-      caption:{base_caption:negAll,char_captions:[]},legacy_uc:false
+      caption:{base_caption:negAll,char_captions:[]}
     },
     negative_prompt:negAll,
   };
@@ -287,12 +284,12 @@ async function generateImage(token,se,basePos,baseNeg,charPrompts,vibeRefs,i2iOp
       params.reference_strength_multiple.push(ref.s);
       params.reference_information_extracted_multiple.push(ref.ie);
     }
+    params.normalize_reference_strength_multiple=true;
     console.log("=== VIBE TRANSFER DEBUG ===");
     console.log("Vibe count:",vibeRefs.length);
     console.log("Strengths:",params.reference_strength_multiple);
     console.log("Info extracted:",params.reference_information_extracted_multiple);
     console.log("Image b64 lengths:",params.reference_image_multiple.map(b=>b.length));
-    console.log("normalize:",params.normalize_reference_strength_multiple);
   }
 
   // img2img support
