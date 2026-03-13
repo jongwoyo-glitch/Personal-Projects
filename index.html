@@ -792,11 +792,10 @@ const ipSaveSnap=()=>{
 const ipStartDraw=(e)=>{
   e.preventDefault();ipSaveSnap();ipDrawing.current=true;
   const p=getIpXY(e);ipLastPos.current=p;
-  // Draw initial dot
   const cv=ipCanvasRef.current;if(!cv)return;
   const ctx=cv.getContext("2d");
   ctx.globalCompositeOperation=ipErase?"destination-out":"source-over";
-  ctx.fillStyle=ipErase?"rgba(0,0,0,1)":"rgba(255,255,255,1)";
+  ctx.fillStyle=ipErase?"rgba(0,0,0,1)":"rgba(80,110,255,1)";
   ctx.beginPath();ctx.arc(p.x,p.y,ipBrush/2,0,Math.PI*2);ctx.fill();
 };
 const ipDraw=(e)=>{
@@ -804,7 +803,7 @@ const ipDraw=(e)=>{
   const cv=ipCanvasRef.current;if(!cv)return;
   const ctx=cv.getContext("2d");const p=getIpXY(e);
   ctx.globalCompositeOperation=ipErase?"destination-out":"source-over";
-  ctx.strokeStyle=ipErase?"rgba(0,0,0,1)":"rgba(255,255,255,1)";
+  ctx.strokeStyle=ipErase?"rgba(0,0,0,1)":"rgba(80,110,255,1)";
   ctx.lineWidth=ipBrush;ctx.lineCap="round";ctx.lineJoin="round";
   if(ipLastPos.current){
     ctx.beginPath();ctx.moveTo(ipLastPos.current.x,ipLastPos.current.y);ctx.lineTo(p.x,p.y);ctx.stroke();
@@ -826,7 +825,7 @@ const getMaskB64=()=>{
   const octx=out.getContext("2d");const od=octx.createImageData(w,h);
   // Clean binary mask: white = inpaint area, black = keep
   for(let i=0;i<src.data.length;i+=4){
-    const hasMask=src.data[i]>128||src.data[i+3]>20;
+    const hasMask=src.data[i+2]>128||src.data[i+3]>20;
     od.data[i]=od.data[i+1]=od.data[i+2]=hasMask?255:0;od.data[i+3]=255;
   }
   octx.putImageData(od,0,0);
@@ -852,7 +851,7 @@ const applyIpMask=()=>{
     const src=cv.getContext("2d").getImageData(0,0,w,h);
     // Binary mask array
     const mask=new Uint8Array(w*h);
-    for(let i=0;i<src.data.length;i+=4)mask[i/4]=src.data[i]>128?1:0;
+    for(let i=0;i<src.data.length;i+=4)mask[i/4]=src.data[i+2]>128?1:0;
     // Erode mask by R pixels for border detection
     const eroded=new Uint8Array(w*h);
     const R=3;
@@ -1355,6 +1354,7 @@ return(
 <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",padding:6,minHeight:0}}>
 <div style={{height:"100%",aspectRatio:String(ratio),maxWidth:"100%",position:"relative",flexShrink:0}}>
 <img src={baseImg} style={{width:"100%",height:"100%",objectFit:"contain",display:"block",borderRadius:4,opacity:.85}}/>
+{mode==="inpaint"&&ipMaskUrl&&<img src={ipMaskUrl} style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"contain",borderRadius:4,pointerEvents:"none"}}/>}
 <div style={{position:"absolute",top:4,left:4,fontSize:8,padding:"1px 6px",borderRadius:3,background:"rgba(120,90,255,.6)",color:"#fff",fontWeight:700}}>SOURCE</div>
 </div>
 </div>
@@ -1402,7 +1402,6 @@ return(
 <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",minHeight:0,padding:4}} onDrop={handleDrop} onDragOver={handleDragOver}>
 {genImg?<div style={{height:"100%",aspectRatio:String(ratio),maxWidth:"100%",position:"relative",flexShrink:0,cursor:"pointer"}} onClick={()=>sLB(true)}>
 <img src={genImg} style={{width:"100%",height:"100%",objectFit:"contain",display:"block",borderRadius:4}}/>
-{mode==="inpaint"&&ipMaskUrl&&<img src={ipMaskUrl} style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"contain",borderRadius:4,opacity:1,pointerEvents:"none"}}/>}
 {mode!=="txt2img"&&<div style={{position:"absolute",top:6,left:6,fontSize:9,padding:"2px 8px",borderRadius:4,fontWeight:700,backdropFilter:"blur(4px)",
   background:mode==="img2img"?"rgba(120,90,255,.5)":"rgba(255,140,60,.5)",
   color:"#fff"}}>{mode==="img2img"?"IMG2IMG":"INPAINT"}</div>}
