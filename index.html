@@ -116,20 +116,30 @@ const _webpDefaultOpts={quality:75,target_size:0,target_PSNR:0,method:4,sns_stre
   use_delta_palette:0,use_sharp_yuv:0};
 
 async function _loadWebpEncoder(){
-  const wasmResp=await fetch("./webp_enc.wasm");
+  const _v="?v=5";
+  // 1. Fetch WASM binary
+  const wasmResp=await fetch("./webp_enc.wasm"+_v);
   if(!wasmResp.ok)throw new Error("WASM fetch "+wasmResp.status);
   const wasmBinary=await wasmResp.arrayBuffer();
-  // Load pre-patched glue JS (no import.meta, no export default, no require)
-  const jsResp=await fetch("./webp_enc.js");
+  // 2. Fetch glue JS and patch ESM→plain JS at runtime
+  const jsResp=await fetch("./webp_enc.js"+_v);
   if(!jsResp.ok)throw new Error("JS fetch "+jsResp.status);
-  const jsText=await jsResp.text();
+  let jsText=await jsResp.text();
+  // Replace ESM-only syntax (safe: idempotent if already patched)
+  jsText=jsText.replace(/import\.meta\.url/g,"location.href");
+  jsText=jsText.replace(/export\s+default\s+Module\s*;?/g,"window.__webpEncFactory=Module;");
+  // 3. Wrap in error capture + inject as inline script
+  window.__webpEncError=null;
+  jsText="try{"+jsText+"}catch(_e){window.__webpEncError=_e.message||String(_e)}";
   const s=document.createElement("script");
   s.textContent=jsText;
   document.head.appendChild(s);
   document.head.removeChild(s);
+  if(window.__webpEncError)throw new Error("글루 실행 에러: "+window.__webpEncError);
   const factory=window.__webpEncFactory;
-  if(!factory)throw new Error("팩토리 로드 실패");
-  delete window.__webpEncFactory;
+  if(!factory)throw new Error("팩토리 미정의 (글루 코드 구조 불일치)");
+  delete window.__webpEncFactory;delete window.__webpEncError;
+  // 4. Init with wasmBinary
   _webpModule=await factory({noInitialRun:true,wasmBinary});
   if(typeof _webpModule.encode!=="function")throw new Error("encode함수 없음");
 }
@@ -1200,26 +1210,34 @@ const initEditCanvas=useCallback(()=>{
 },[se.width,se.height]);
 
 const editImg=editSrc||genImg;
-useEffect(()=>{if(editMode&&editImg)initEditCanvas()},[editMode,editImg,initEditCanvas]);
-
-// Bake source image into source layer canvas when img element loads (once per edit session)
-const srcBaked=useRef(false);
-useEffect(()=>{srcBaked.current=false},[editMode,editImg]); // reset on new edit session
+const editSessionId=useRef(null);
 useEffect(()=>{
-  if(!editMode||!editImg||srcBaked.current)return;
+  if(editMode&&editImg){
+    editSessionId.current=G(); // new session ID
+    initEditCanvas();
+  }else{
+    editSessionId.current=null;
+  }
+},[editMode,editImg,initEditCanvas]);
+
+// Bake source image into source layer canvas (standalone — no DOM img dependency)
+const bakedSession=useRef(null);
+useEffect(()=>{
+  if(!editMode||!editImg)return;
+  if(bakedSession.current===editSessionId.current)return; // already baked this session
   const srcLayer=editLayers.find(l=>l.type==="source");
   if(!srcLayer)return;
   const srcCv=editLayerCanvases.current[srcLayer.id];
   if(!srcCv)return;
-  const img=editImgRef.current;
-  if(!img)return;
-  const draw=()=>{
+  const sid=editSessionId.current;
+  const img=new Image();
+  img.onload=()=>{
+    if(editSessionId.current!==sid)return; // session changed, abort
     srcCv.getContext("2d").drawImage(img,0,0,se.width,se.height);
-    srcBaked.current=true;
+    bakedSession.current=sid;
     compositeEdit();
   };
-  if(img.complete&&img.naturalWidth>0)draw();
-  else img.addEventListener("load",draw,{once:true});
+  img.src=editImg;
 },[editMode,editImg,editLayers]);
 
 // Helper: draw all layers in order to a context
@@ -2443,9 +2461,10 @@ return(
 </div>}
 {/* Canvas area with zoom/pan */}
 <div style={{flex:1,overflow:"hidden",position:"relative",display:"flex",alignItems:"center",justifyContent:"center"}} onWheel={editWheel}>
-<div ref={editWrapRef} style={{position:"relative",transform:`scale(${editZoom}) translate(${editPan.x/editZoom}px,${editPan.y/editZoom}px)`,transformOrigin:"center center",transition:editPinch.current?"none":"transform 0.1s",aspectRatio:String(se.width/se.height),maxWidth:"90%",maxHeight:"90%",
-backgroundImage:"repeating-conic-gradient(#333 0% 25%, #555 0% 50%)",backgroundSize:"16px 16px"}}>
-<img ref={editImgRef} src={editImg} style={{position:"absolute",width:"100%",height:"100%",objectFit:"contain",opacity:0,pointerEvents:"none",userSelect:"none",WebkitUserSelect:"none"}} draggable={false}/>
+<div ref={editWrapRef} style={{position:"relative",transform:`scale(${editZoom}) translate(${editPan.x/editZoom}px,${editPan.y/editZoom}px)`,transformOrigin:"center center",transition:editPinch.current?"none":"transform 0.1s",aspectRatio:String(se.width/se.height),maxWidth:"90%",maxHeight:"90%"}}>
+<img ref={editImgRef} src={editImg} style={{width:"100%",height:"100%",objectFit:"contain",display:"block",userSelect:"none",WebkitUserSelect:"none"}} draggable={false}/>
+{/* Opaque checkerboard layer — blocks the img, shows transparency */}
+<div style={{position:"absolute",inset:0,backgroundImage:"repeating-conic-gradient(#333 0% 25%, #555 0% 50%)",backgroundSize:"16px 16px"}}/>
 <canvas ref={editCanvasRef} style={{position:"absolute",inset:0,width:"100%",height:"100%",
   cursor:editTool==="eyedropper"?"crosshair":editTool==="blur"?"cell":editTool==="bgremove"?"crosshair":editTool==="wand"?"crosshair":"default",touchAction:"none"}}
   onMouseDown={editStartDraw}
