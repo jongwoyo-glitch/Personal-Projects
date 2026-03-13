@@ -104,6 +104,57 @@ async function idbClear(){
   try{const db=await idbOpen();const tx=db.transaction(IDB_STORE,"readwrite");tx.objectStore(IDB_STORE).clear();await new Promise(r=>{tx.oncomplete=r});db.close()}catch(e){}
 }
 
+// WASM WebP encoder (lazy-loaded via @jsquash/webp)
+let _webpEncode=null;
+async function wasmWebpBlob(canvas,quality=0.9){
+  try{
+    if(!_webpEncode){
+      const m=await import("https://cdn.jsdelivr.net/npm/@jsquash/webp@1.5.0/+esm");
+      _webpEncode=m.encode;
+    }
+    const ctx=canvas.getContext("2d");
+    const imageData=ctx.getImageData(0,0,canvas.width,canvas.height);
+    const buf=await _webpEncode(imageData,{quality:Math.round(quality*100)});
+    return new Blob([buf],{type:"image/webp"});
+  }catch(e){
+    console.warn("WASM WebP encode failed, trying native:",e);
+    // Fallback: try native toBlob (works on Chrome/Firefox, fails on Safari)
+    const blob=await new Promise(r=>canvas.toBlob(r,"image/webp",quality));
+    if(blob&&blob.type==="image/webp")return blob;
+    return null; // caller handles PNG fallback
+  }
+}
+
+// Universal file save — iPad: native share sheet, Desktop: File System Access or <a> fallback
+async function saveBlob(blob,filename){
+  // 1. Try Web Share API (iPad/iOS → native share sheet with "Save to Files")
+  if(navigator.share&&navigator.canShare){
+    try{
+      const file=new File([blob],filename,{type:blob.type});
+      if(navigator.canShare({files:[file]})){
+        await navigator.share({files:[file]});
+        return;
+      }
+    }catch(e){if(e.name!=="AbortError")console.warn("share failed:",e)}
+  }
+  // 2. Try File System Access API (desktop Chrome)
+  if(window.showSaveFilePicker){
+    try{
+      const ext=filename.split(".").pop()||"png";
+      const types=[{description:ext.toUpperCase()+" Image",accept:{[blob.type]:["."+ext]}}];
+      const handle=await window.showSaveFilePicker({suggestedName:filename,types});
+      const w=await handle.createWritable();await w.write(blob);await w.close();
+      return;
+    }catch(e){if(e.name==="AbortError")return;console.warn("savePicker failed:",e)}
+  }
+  // 3. Fallback: <a download>
+  const a=document.createElement("a");a.href=URL.createObjectURL(blob);
+  a.download=filename;a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),5000);
+}
+// Helper: convert blob URL or object URL to Blob
+async function urlToBlob(url){const r=await fetch(url);return r.blob()}
+
 const DS={apiToken:"",model:"nai-diffusion-4-5-full",width:832,height:1216,steps:23,scale:6,sampler:"k_euler_ancestral",seed:"",smea:false,smeaDyn:false,format:"png",defaultFilename:"nai-pb-backup",tier:3,anlasBalance:10000};
 const MO=[{v:"nai-diffusion-4-5-full",l:"V4.5 Full"},{v:"nai-diffusion-4-5-curated",l:"V4.5 Curated"}];
 const SA=[{v:"k_euler",l:"Euler"},{v:"k_euler_ancestral",l:"Euler Ancestral"},{v:"k_dpmpp_2s_ancestral",l:"DPM++ 2S Ancestral"},{v:"k_dpmpp_2m",l:"DPM++ 2M"},{v:"k_dpmpp_sde",l:"DPM++ SDE"},{v:"ddim_v3",l:"DDIM"}];
@@ -638,22 +689,38 @@ const[pw,sPw]=useState({sidebar:200,base:200,preview:300}); // panel widths
 // Resizer drag logic
 const dragRef=useRef(null);
 const onResizeStart=(panel,e)=>{
-  e.preventDefault();
+  e.preventDefault();e.stopPropagation();
   const startX=e.touches?e.touches[0].clientX:e.clientX;
   const startW=pw[panel];
+  let rafId=null;let lastX=startX;
   const onMove=ev=>{
-    const x=ev.touches?ev.touches[0].clientX:ev.clientX;
-    const delta=x-startX;
-    const limits={sidebar:[120,350],base:[140,400],preview:[180,600]};
-    const[mn,mx]=limits[panel]||[100,500];
-    sPw(p=>({...p,[panel]:Math.max(mn,Math.min(mx,startW+delta))}));
+    if(ev.touches)ev.preventDefault(); // prevent Safari scroll/gesture competition
+    lastX=ev.touches?ev.touches[0].clientX:ev.clientX;
+    if(rafId)return; // throttle to rAF
+    rafId=requestAnimationFrame(()=>{
+      rafId=null;
+      const delta=lastX-startX;
+      const limits={sidebar:[120,350],base:[140,400],preview:[180,600]};
+      const[mn,mx]=limits[panel]||[100,500];
+      sPw(p=>({...p,[panel]:Math.max(mn,Math.min(mx,startW+delta))}));
+    });
   };
-  const onUp=()=>{document.removeEventListener("mousemove",onMove);document.removeEventListener("mouseup",onUp);document.removeEventListener("touchmove",onMove);document.removeEventListener("touchend",onUp);document.body.style.cursor="";document.body.style.userSelect=""};
+  const onUp=()=>{
+    if(rafId){cancelAnimationFrame(rafId);rafId=null}
+    document.removeEventListener("mousemove",onMove);
+    document.removeEventListener("mouseup",onUp);
+    document.removeEventListener("touchmove",onMove);
+    document.removeEventListener("touchend",onUp);
+    document.removeEventListener("touchcancel",onUp);
+    document.body.style.cursor="";document.body.style.userSelect="";
+  };
   document.addEventListener("mousemove",onMove);document.addEventListener("mouseup",onUp);
-  document.addEventListener("touchmove",onMove,{passive:false});document.addEventListener("touchend",onUp);
+  document.addEventListener("touchmove",onMove,{passive:false});
+  document.addEventListener("touchend",onUp);
+  document.addEventListener("touchcancel",onUp);
   document.body.style.cursor="col-resize";document.body.style.userSelect="none";
 };
-const Rz=({panel})=><div className="resizer" onMouseDown={e=>onResizeStart(panel,e)} onTouchStart={e=>onResizeStart(panel,e)}><div className="rz-handle" onMouseDown={e=>onResizeStart(panel,e)} onTouchStart={e=>onResizeStart(panel,e)}/></div>;
+const Rz=({panel})=><div className="resizer" onMouseDown={e=>onResizeStart(panel,e)} onTouchStart={e=>onResizeStart(panel,e)}><div className="rz-handle" onMouseDown={e=>{e.stopPropagation();onResizeStart(panel,e)}} onTouchStart={e=>{e.stopPropagation();onResizeStart(panel,e)}}/></div>;
 const[anlas,sAnlas]=useState(null); // {anlas, tier, active}
 const[history,sHistory]=useState(()=>ll("nai-pb-hist",[]));
 const[page,sPage]=useState("gen");
@@ -839,19 +906,14 @@ const downloadImg=async()=>{
   let finalBlob=blob;
   let actualExt=fmt;
   if(fmt==="webp"&&blob.type!=="image/webp"){
-    // Convert to webp via canvas
     const img=new Image();const url=URL.createObjectURL(blob);
     await new Promise(r=>{img.onload=r;img.src=url});
     const cv=document.createElement("canvas");cv.width=img.width;cv.height=img.height;
-    cv.getContext("2d").drawImage(img,0,0);
-    const converted=await new Promise(r=>cv.toBlob(r,"image/webp",.95));
-    URL.revokeObjectURL(url);
-    // Verify actual conversion — Safari/iOS may silently fallback to png
-    if(converted&&converted.type==="image/webp"){finalBlob=converted}
-    else{finalBlob=converted||blob;actualExt="png"}
+    cv.getContext("2d").drawImage(img,0,0);URL.revokeObjectURL(url);
+    const webpBlob=await wasmWebpBlob(cv,0.95);
+    if(webpBlob){finalBlob=webpBlob}else{actualExt="png"}
   }
-  const a=document.createElement("a");a.href=URL.createObjectURL(finalBlob);
-  a.download=`nai_${Date.now()}.${actualExt}`;a.click();URL.revokeObjectURL(a.href);
+  await saveBlob(finalBlob,`nai_${Date.now()}.${actualExt}`);
 };
 
 /* ── Image Upload as Base ── */
@@ -1933,8 +1995,7 @@ return(
   }
   if(count===0){tw("⚠ 저장된 이미지가 없습니다");return}
   const zipBlob=await zip.generateAsync({type:"blob"});
-  const a=document.createElement("a");a.href=URL.createObjectURL(zipBlob);
-  a.download="NAI_history_"+new Date().toISOString().slice(0,10)+".zip";a.click();
+  await saveBlob(zipBlob,"NAI_history_"+new Date().toISOString().slice(0,10)+".zip");
   tw(count+"개 이미지 ZIP 다운로드");
 }} style={{...Z.hB,fontSize:10,padding:"4px 10px",color:"#5cb8ff"}}>📦 ZIP 다운로드</button>}
 {history.length>0&&<button onClick={()=>{if(confirm("전체 히스토리를 삭제하시겠습니까?")){sHistory([]);idbClear()}}} style={{...Z.hB,fontSize:10,padding:"4px 10px",color:"#f55"}}>🗑 전체 삭제</button>}
@@ -1981,7 +2042,7 @@ return(
 <div style={{padding:"6px 12px",fontSize:9,color:"#555",borderBottom:"1px solid rgba(255,255,255,.06)",fontWeight:600}}>저장</div>
 <button onClick={async()=>{sHistMenu(null);
   const url=await loadImg();
-  if(url){const a=document.createElement("a");a.href=url;a.download="NAI_"+h.id+".png";a.click();tw("PNG 저장")}
+  if(url){const b=await urlToBlob(url);await saveBlob(b,"NAI_"+h.id+".png");tw("PNG 저장")}
 }} style={{width:"100%",background:"none",border:"none",borderBottom:"1px solid rgba(255,255,255,.04)",color:"#8d8",fontSize:11,padding:"8px 12px",cursor:"pointer",textAlign:"left",fontFamily:"inherit"}}>💾 PNG 저장</button>
 <button onClick={async()=>{sHistMenu(null);
   const blob=await idbGet(h.id);if(!blob){tw("⚠ 없음");return}
@@ -1989,9 +2050,9 @@ return(
   await new Promise(r=>{img.onload=r;img.src=u});
   const cv=document.createElement("canvas");cv.width=img.width||h.w||se.width;cv.height=img.height||h.h||se.height;
   cv.getContext("2d").drawImage(img,0,0);URL.revokeObjectURL(u);
-  const wb=await new Promise(r=>cv.toBlob(r,"image/webp",0.9));
-  const ext=(wb&&wb.type==="image/webp")?"webp":"png";
-  const a=document.createElement("a");a.href=URL.createObjectURL(wb);a.download="NAI_"+h.id+"."+ext;a.click();tw(ext==="webp"?"WebP 저장":"PNG 저장 (WebP 미지원)");
+  const wb=await wasmWebpBlob(cv,0.9);
+  if(wb){await saveBlob(wb,"NAI_"+h.id+".webp");tw("WebP 저장")}
+  else{const pb=await new Promise(r=>cv.toBlob(r,"image/png"));await saveBlob(pb,"NAI_"+h.id+".png");tw("PNG 저장 (WebP 실패)")}
 }} style={{width:"100%",background:"none",border:"none",borderBottom:"1px solid rgba(255,255,255,.06)",color:"#5cb8ff",fontSize:11,padding:"8px 12px",cursor:"pointer",textAlign:"left",fontFamily:"inherit"}}>💾 WebP 저장</button>
 {/* 편집 */}
 <div style={{padding:"6px 12px",fontSize:9,color:"#555",borderBottom:"1px solid rgba(255,255,255,.06)",fontWeight:600}}>편집</div>
@@ -2048,16 +2109,16 @@ return(
 <div style={{width:1,height:24,background:"rgba(255,255,255,.08)"}}/>
 {/* Action buttons */}
 <button onClick={async()=>{const url=await gLoadImg();if(url){sGenImg(url);sHistGallery(null);sPage("gen");tw("불러오기")}}} style={{...Z.hB,fontSize:11,padding:"6px 14px",color:"#b095ff"}}>🖼 불러오기</button>
-<button onClick={async()=>{const url=histGallery.url;const a=document.createElement("a");a.href=url;a.download="NAI_"+h.id+".png";a.click();tw("PNG 저장")}} style={{...Z.hB,fontSize:11,padding:"6px 14px",color:"#8d8"}}>💾 PNG</button>
+<button onClick={async()=>{const url=histGallery.url;const b=await urlToBlob(url);await saveBlob(b,"NAI_"+h.id+".png");tw("PNG 저장")}} style={{...Z.hB,fontSize:11,padding:"6px 14px",color:"#8d8"}}>💾 PNG</button>
 <button onClick={async()=>{
   const blob=await idbGet(h.id);if(!blob)return;
   const img=new Image();const u=URL.createObjectURL(blob);
   await new Promise(r=>{img.onload=r;img.src=u});
   const cv=document.createElement("canvas");cv.width=img.width||h.w||se.width;cv.height=img.height||h.h||se.height;
   cv.getContext("2d").drawImage(img,0,0);URL.revokeObjectURL(u);
-  const wb=await new Promise(r=>cv.toBlob(r,"image/webp",0.9));
-  const ext=(wb&&wb.type==="image/webp")?"webp":"png";
-  const a=document.createElement("a");a.href=URL.createObjectURL(wb);a.download="NAI_"+h.id+"."+ext;a.click();tw(ext==="webp"?"WebP 저장":"PNG 저장 (WebP 미지원)");
+  const wb=await wasmWebpBlob(cv,0.9);
+  if(wb){await saveBlob(wb,"NAI_"+h.id+".webp");tw("WebP 저장")}
+  else{const pb=await new Promise(r=>cv.toBlob(r,"image/png"));await saveBlob(pb,"NAI_"+h.id+".png");tw("PNG 저장 (WebP 실패)")}
 }} style={{...Z.hB,fontSize:11,padding:"6px 14px",color:"#5cb8ff"}}>💾 WebP</button>
 <div style={{width:1,height:24,background:"rgba(255,255,255,.08)"}}/>
 <button onClick={async()=>{const url=await gLoadImg();if(url){sHistGallery(null);sEditSrc(url);sEditMode("edit")}}} style={{...Z.hB,fontSize:11,padding:"6px 14px",color:"#5cb8ff"}}>✏️ 편집</button>
@@ -2158,8 +2219,7 @@ return(
   const ctx=out.getContext("2d");ctx.drawImage(img,0,0,se.width,se.height);
   editLayers.forEach(l=>{if(l.visible){const lcv=editLayerCanvases.current[l.id];if(lcv)ctx.drawImage(lcv,0,0)}});
   const blob=await new Promise(r=>out.toBlob(r,"image/png"));
-  const a=document.createElement("a");a.href=URL.createObjectURL(blob);
-  a.download="NAI_bgremoved_"+Date.now()+".png";a.click();
+  await saveBlob(blob,"NAI_bgremoved_"+Date.now()+".png");
   tw("PNG 내보내기 완료");
 }} className="gen-btn" style={{fontSize:11,padding:"5px 14px",minHeight:44,background:"linear-gradient(135deg,#338844,#55bb77)"}}>💾 PNG</button>
 <button onClick={async()=>{
@@ -2167,11 +2227,9 @@ return(
   const out=document.createElement("canvas");out.width=se.width;out.height=se.height;
   const ctx=out.getContext("2d");ctx.drawImage(img,0,0,se.width,se.height);
   editLayers.forEach(l=>{if(l.visible){const lcv=editLayerCanvases.current[l.id];if(lcv)ctx.drawImage(lcv,0,0)}});
-  const blob=await new Promise(r=>out.toBlob(r,"image/webp",0.9));
-  const ext=(blob&&blob.type==="image/webp")?"webp":"png";
-  const a=document.createElement("a");a.href=URL.createObjectURL(blob);
-  a.download="NAI_bgremoved_"+Date.now()+"."+ext;a.click();
-  tw(ext==="webp"?"WebP 내보내기 완료":"PNG 내보내기 (WebP 미지원)");
+  const wb=await wasmWebpBlob(out,0.9);
+  if(wb){await saveBlob(wb,"NAI_bgremoved_"+Date.now()+".webp");tw("WebP 내보내기 완료")}
+  else{const pb=await new Promise(r=>out.toBlob(r,"image/png"));await saveBlob(pb,"NAI_bgremoved_"+Date.now()+".png");tw("PNG 내보내기 (WebP 실패)")}
 }} style={{...Z.hB,fontSize:11,padding:"5px 12px",minHeight:44,color:"#5cb8ff"}}>💾 WebP</button>
 <button onClick={()=>{sEditMode(false);sEditSrc(null);sEditSel(null);editSelPath.current=null}} style={{...Z.hB,fontSize:14,padding:"6px 12px",minHeight:44,color:"#f66"}}>✕</button>
 </div>}
