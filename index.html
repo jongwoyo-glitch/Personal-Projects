@@ -44,12 +44,14 @@ select option{background:#1a1a30;color:#ddd}
 .gen-loadbar{position:fixed;top:0;left:0;right:0;height:3px;z-index:9999;overflow:hidden;background:rgba(120,90,255,.1)}
 .gen-loadbar::after{content:'';position:absolute;top:0;height:100%;background:linear-gradient(90deg,#785aff,#ff6b9d);animation:loadbar 1.5s ease-in-out infinite}
 .resizer{width:20px;cursor:col-resize;background:transparent;flex-shrink:0;position:relative;z-index:10;touch-action:none;margin:0 -7px}
-.resizer:hover,.resizer:active{background:rgba(120,90,255,.06)}
+.resizer:active{background:rgba(120,90,255,.06)}
 .resizer::after{content:'';position:absolute;top:0;left:50%;transform:translateX(-50%);width:2px;height:100%;background:rgba(255,255,255,.06);border-radius:1px}
-.resizer:hover::after,.resizer:active::after{background:rgba(120,90,255,.4)}
-.rz-handle{position:absolute;top:0;left:50%;transform:translateX(-50%);width:20px;height:36px;background:rgba(120,90,255,.2);border-radius:0 0 8px 8px;cursor:col-resize;display:flex;align-items:center;justify-content:center;touch-action:none}
-.rz-handle:hover,.rz-handle:active{background:rgba(120,90,255,.5)}
-.rz-handle::after{content:'⋮';color:rgba(255,255,255,.45);font-size:13px;font-weight:700;line-height:1}
+.resizer:active::after{background:rgba(120,90,255,.4)}
+@media(hover:hover){.resizer:hover{background:rgba(120,90,255,.06)}.resizer:hover::after{background:rgba(120,90,255,.4)}}
+.rz-handle{position:absolute;top:0;left:50%;transform:translateX(-50%);width:24px;height:44px;background:rgba(120,90,255,.15);border-radius:0 0 8px 8px;cursor:col-resize;display:flex;align-items:center;justify-content:center;touch-action:none}
+.rz-handle:active{background:rgba(120,90,255,.5)}
+@media(hover:hover){.rz-handle:hover{background:rgba(120,90,255,.4)}}
+.rz-handle::after{content:'⋮';color:rgba(255,255,255,.4);font-size:14px;font-weight:700;line-height:1}
 .spinner{width:16px;height:16px;border:2px solid rgba(120,90,255,.2);border-top-color:#785aff;border-radius:50%;animation:spin .8s linear infinite;display:inline-block}
 /* Scrollable panels - iOS momentum */
 .scroll-y{overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
@@ -104,61 +106,90 @@ async function idbClear(){
   try{const db=await idbOpen();const tx=db.transaction(IDB_STORE,"readwrite");tx.objectStore(IDB_STORE).clear();await new Promise(r=>{tx.oncomplete=r});db.close()}catch(e){}
 }
 
-// WASM WebP encoder — multiple strategies for cross-browser CDN compatibility
+// WASM WebP encoder — multi-strategy with explicit error reporting
 let _webpEncodeFn=null;
-let _webpLoadError=null;
+let _webpLoadAttempted=false;
+let _webpErrors=[];
 async function _loadWebpEncoder(){
-  // Strategy 1: esm.sh (recommended by jSquash — handles WASM bundling internally)
+  _webpErrors=[];
+  
+  // Strategy 1: esm.sh sub-module import (encode only — avoids decoder WASM issues)
+  try{
+    const m=await import("https://esm.sh/@jsquash/webp@1.4.0/encode");
+    const fn=m.default||m.encode;
+    if(fn){
+      const test=new ImageData(new Uint8ClampedArray([255,0,0,255]),1,1);
+      const r=await fn(test,{quality:75});
+      if(r&&r.byteLength>0){_webpEncodeFn=fn;console.log("WebP: esm.sh encode sub-module OK");return}
+    }
+    _webpErrors.push("esm.sh/encode: 테스트 인코딩 결과 없음");
+  }catch(e){_webpErrors.push("esm.sh/encode: "+e.message);console.warn("WebP strategy 1:",e)}
+
+  // Strategy 2: esm.sh main module
   try{
     const m=await import("https://esm.sh/@jsquash/webp@1.4.0");
     if(m.encode){
-      // Test encode with tiny 1x1 image
-      const test=new ImageData(1,1);
-      const r=await m.encode(test,{quality:50});
-      if(r&&r.byteLength>0){_webpEncodeFn=m.encode;return}
+      const test=new ImageData(new Uint8ClampedArray([255,0,0,255]),1,1);
+      const r=await m.encode(test,{quality:75});
+      if(r&&r.byteLength>0){_webpEncodeFn=m.encode;console.log("WebP: esm.sh main module OK");return}
     }
-  }catch(e){console.warn("esm.sh strategy failed:",e)}
+    _webpErrors.push("esm.sh/main: 테스트 인코딩 결과 없음");
+  }catch(e){_webpErrors.push("esm.sh/main: "+e.message);console.warn("WebP strategy 2:",e)}
 
-  // Strategy 2: jsdelivr ESM + manual WASM fetch + init
+  // Strategy 3: older version via esm.sh  
+  try{
+    const m=await import("https://esm.sh/@jsquash/webp@1.2.0/encode");
+    const fn=m.default||m.encode;
+    if(fn){
+      const test=new ImageData(new Uint8ClampedArray([255,0,0,255]),1,1);
+      const r=await fn(test,{quality:75});
+      if(r&&r.byteLength>0){_webpEncodeFn=fn;console.log("WebP: esm.sh v1.2.0 encode OK");return}
+    }
+    _webpErrors.push("esm.sh/v1.2: 테스트 인코딩 결과 없음");
+  }catch(e){_webpErrors.push("esm.sh/v1.2: "+e.message);console.warn("WebP strategy 3:",e)}
+
+  // Strategy 4: jsdelivr + manual WASM init
   try{
     const m=await import("https://cdn.jsdelivr.net/npm/@jsquash/webp@1.4.0/+esm");
-    if(m.init){
-      const wasmR=await fetch("https://cdn.jsdelivr.net/npm/@jsquash/webp@1.4.0/codec/enc/webp_enc.wasm",{mode:"cors"});
-      if(wasmR.ok){
-        const buf=await wasmR.arrayBuffer();
-        await m.init(buf);
-      }
-    }
+    const wasmR=await fetch("https://cdn.jsdelivr.net/npm/@jsquash/webp@1.4.0/codec/enc/webp_enc.wasm",{mode:"cors"});
+    if(!wasmR.ok)throw new Error("WASM fetch "+wasmR.status);
+    const wasmBuf=await wasmR.arrayBuffer();
+    if(m.init)await m.init(wasmBuf);
     if(m.encode){
-      const test=new ImageData(1,1);
-      const r=await m.encode(test,{quality:50});
-      if(r&&r.byteLength>0){_webpEncodeFn=m.encode;return}
+      const test=new ImageData(new Uint8ClampedArray([255,0,0,255]),1,1);
+      const r=await m.encode(test,{quality:75});
+      if(r&&r.byteLength>0){_webpEncodeFn=m.encode;console.log("WebP: jsdelivr+init OK");return}
     }
-  }catch(e){console.warn("jsdelivr strategy failed:",e)}
-
-  throw new Error("WebP WASM 로딩 실패 — 모든 CDN에서 실패");
+    _webpErrors.push("jsdelivr+init: 테스트 인코딩 결과 없음");
+  }catch(e){_webpErrors.push("jsdelivr+init: "+e.message);console.warn("WebP strategy 4:",e)}
 }
 
 async function wasmWebpBlob(canvas,quality=0.9){
   try{
+    if(!_webpEncodeFn&&!_webpLoadAttempted){
+      _webpLoadAttempted=true;
+      await _loadWebpEncoder();
+    }
     if(!_webpEncodeFn){
-      if(_webpLoadError)throw _webpLoadError;
-      try{await _loadWebpEncoder()}catch(e){_webpLoadError=e;throw e}
+      // All WASM strategies failed — try native as last resort
+      try{
+        const blob=await new Promise(r=>canvas.toBlob(r,"image/webp",quality));
+        if(blob&&blob.type==="image/webp")return blob;
+      }catch{}
+      console.error("WebP 전체 실패:",_webpErrors);
+      return null;
     }
     const ctx=canvas.getContext("2d");
     const imageData=ctx.getImageData(0,0,canvas.width,canvas.height);
     const buf=await _webpEncodeFn(imageData,{quality:Math.round(quality*100)});
     return new Blob([buf],{type:"image/webp"});
   }catch(e){
-    console.error("WebP encode:",e);
-    // Last resort: native toBlob
-    try{
-      const blob=await new Promise(r=>canvas.toBlob(r,"image/webp",quality));
-      if(blob&&blob.type==="image/webp")return blob;
-    }catch{}
+    console.error("WebP encode runtime:",e);
     return null;
   }
 }
+// Debug helper: run _webpDebug() in console to see errors
+window._webpDebug=()=>({fn:!!_webpEncodeFn,attempted:_webpLoadAttempted,errors:[..._webpErrors]});
 
 // Universal file save — iPad: native share sheet, Desktop: File System Access or <a> fallback
 async function saveBlob(blob,filename){
@@ -721,17 +752,18 @@ useEffect(()=>{localStorage.setItem("nai-pb-i2i-str",i2iStrength)},[i2iStrength]
 useEffect(()=>{localStorage.setItem("nai-pb-i2i-noise",i2iNoise)},[i2iNoise]);
 const[pw,sPw]=useState({sidebar:200,base:200,preview:300}); // panel widths
 
-// Resizer drag logic
-const dragRef=useRef(null);
+// Resizer drag logic — Pointer Events + setPointerCapture (unified mouse/touch/pencil)
 const onResizeStart=(panel,e)=>{
   e.preventDefault();e.stopPropagation();
-  const startX=e.touches?e.touches[0].clientX:e.clientX;
+  const el=e.currentTarget;
+  const pid=e.pointerId;
+  if(pid!=null)el.setPointerCapture(pid);
+  const startX=e.clientX;
   const startW=pw[panel];
-  let rafId=null;let lastX=startX;
+  let rafId=null,lastX=startX;
   const onMove=ev=>{
-    if(ev.touches)ev.preventDefault(); // prevent Safari scroll/gesture competition
-    lastX=ev.touches?ev.touches[0].clientX:ev.clientX;
-    if(rafId)return; // throttle to rAF
+    lastX=ev.clientX;
+    if(rafId)return;
     rafId=requestAnimationFrame(()=>{
       rafId=null;
       const delta=lastX-startX;
@@ -742,20 +774,18 @@ const onResizeStart=(panel,e)=>{
   };
   const onUp=()=>{
     if(rafId){cancelAnimationFrame(rafId);rafId=null}
-    document.removeEventListener("mousemove",onMove);
-    document.removeEventListener("mouseup",onUp);
-    document.removeEventListener("touchmove",onMove);
-    document.removeEventListener("touchend",onUp);
-    document.removeEventListener("touchcancel",onUp);
+    el.removeEventListener("pointermove",onMove);
+    el.removeEventListener("pointerup",onUp);
+    el.removeEventListener("pointercancel",onUp);
+    if(pid!=null)try{el.releasePointerCapture(pid)}catch{}
     document.body.style.cursor="";document.body.style.userSelect="";
   };
-  document.addEventListener("mousemove",onMove);document.addEventListener("mouseup",onUp);
-  document.addEventListener("touchmove",onMove,{passive:false});
-  document.addEventListener("touchend",onUp);
-  document.addEventListener("touchcancel",onUp);
+  el.addEventListener("pointermove",onMove);
+  el.addEventListener("pointerup",onUp);
+  el.addEventListener("pointercancel",onUp);
   document.body.style.cursor="col-resize";document.body.style.userSelect="none";
 };
-const Rz=({panel})=><div className="resizer" onMouseDown={e=>onResizeStart(panel,e)} onTouchStart={e=>onResizeStart(panel,e)}><div className="rz-handle" onMouseDown={e=>{e.stopPropagation();onResizeStart(panel,e)}} onTouchStart={e=>{e.stopPropagation();onResizeStart(panel,e)}}/></div>;
+const Rz=({panel})=><div className="resizer" onPointerDown={e=>onResizeStart(panel,e)}><div className="rz-handle" onPointerDown={e=>{e.stopPropagation();onResizeStart(panel,e)}}/></div>;
 const[anlas,sAnlas]=useState(null); // {anlas, tier, active}
 const[history,sHistory]=useState(()=>ll("nai-pb-hist",[]));
 const[page,sPage]=useState("gen");
@@ -946,7 +976,7 @@ const downloadImg=async()=>{
     const cv=document.createElement("canvas");cv.width=img.width;cv.height=img.height;
     cv.getContext("2d").drawImage(img,0,0);URL.revokeObjectURL(url);
     const webpBlob=await wasmWebpBlob(cv,0.95);
-    if(webpBlob){finalBlob=webpBlob}else{actualExt="png";tw("⚠ WebP 인코딩 실패 → PNG 저장")}
+    if(webpBlob){finalBlob=webpBlob}else{actualExt="png";tw("⚠ WebP 실패→PNG (콘솔에서 _webpDebug() 실행)")}
   }
   await saveBlob(finalBlob,`nai_${Date.now()}.${actualExt}`);
 };
