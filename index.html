@@ -1030,19 +1030,27 @@ const editStartDraw=(e)=>{
   if((e.metaKey||e.ctrlKey)&&!e.altKey){
     e.preventDefault();doEyedrop(e);return;
   }
-  // Ctrl+Alt drag = brush resize
-  if((e.ctrlKey||e.metaKey)&&e.altKey&&!e.touches){
+  // Ctrl+Alt drag = brush resize (mouse + touch/pencil)
+  if((e.ctrlKey||e.metaKey)&&e.altKey){
     e.preventDefault();
     const r=editWrapRef.current?.getBoundingClientRect();
-    brushResizing.current={startX:e.clientX,startSize:editBrush};
-    sBrushPreview({x:e.clientX-(r?.left||0),y:e.clientY-(r?.top||0),size:editBrush});
+    const t=e.touches?e.touches[0]:e;
+    const startX=t.clientX;
+    brushResizing.current={startX,startSize:editBrush};
+    sBrushPreview({x:startX-(r?.left||0),y:t.clientY-(r?.top||0),size:editBrush});
     const onMove=(ev)=>{
-      const dx=ev.clientX-brushResizing.current.startX;
-      const ns=Math.max(1,Math.min(100,brushResizing.current.startSize+Math.round(dx/2)));
-      sEditBrush(ns);sBrushPreview(p=>p?{...p,size:ns}:null);
+      const p=ev.touches?ev.touches[0]:ev;
+      if(!p)return;
+      const dx=p.clientX-brushResizing.current.startX;
+      const ns=Math.max(1,Math.min(400,brushResizing.current.startSize+Math.round(dx/2)));
+      sEditBrush(ns);sBrushPreview(p2=>p2?{...p2,size:ns}:null);
     };
-    const onUp=()=>{brushResizing.current=null;sBrushPreview(null);document.removeEventListener("mousemove",onMove);document.removeEventListener("mouseup",onUp)};
+    const onUp=()=>{brushResizing.current=null;sBrushPreview(null);
+      document.removeEventListener("mousemove",onMove);document.removeEventListener("mouseup",onUp);
+      document.removeEventListener("touchmove",onMove);document.removeEventListener("touchend",onUp);
+    };
     document.addEventListener("mousemove",onMove);document.addEventListener("mouseup",onUp);
+    document.addEventListener("touchmove",onMove,{passive:false});document.addEventListener("touchend",onUp);
     return;
   }
   if(e.touches&&e.touches.length===2){e.preventDefault();editUndo();return}
@@ -1232,6 +1240,19 @@ const editApply=()=>{
     const url=URL.createObjectURL(blob);
     sBaseImg(url);sMode("img2img");sEditMode(false);sEditSrc(null);
     tw("편집 적용 → Base Image 설정됨");
+  },"image/png");
+};
+const editApplyToGen=()=>{
+  if(!editImg)return;
+  const img=editImgRef.current;if(!img)return;
+  const out=document.createElement("canvas");out.width=se.width;out.height=se.height;
+  const ctx=out.getContext("2d");
+  ctx.drawImage(img,0,0,se.width,se.height);
+  editLayers.forEach(l=>{if(l.visible){const lcv=editLayerCanvases.current[l.id];if(lcv)ctx.drawImage(lcv,0,0)}});
+  out.toBlob(blob=>{
+    const url=URL.createObjectURL(blob);
+    sGenImg(url);sEditMode(false);sEditSrc(null);
+    tw("편집 적용 → 미리보기 설정됨");
   },"image/png");
 };
 
@@ -1810,7 +1831,8 @@ return(
   borderColor:pencilOnly?"rgba(255,180,60,.4)":"rgba(255,255,255,.1)",
   color:pencilOnly?"#fa5":"#666"}} title="Apple Pencil 전용 모드">{pencilOnly?"✏️ 펜슬":"👆 터치"}</button>
 <div style={{flex:1}}/>
-<button onClick={editApply} className="gen-btn" style={{fontSize:12,padding:"6px 14px",minHeight:44,background:"linear-gradient(135deg,#3388ff,#5cb8ff)"}}>✅ 적용 → Base</button>
+<button onClick={editApply} className="gen-btn" style={{fontSize:12,padding:"6px 14px",minHeight:44,background:"linear-gradient(135deg,#3388ff,#5cb8ff)"}}>✅ → Base</button>
+<button onClick={editApplyToGen} style={{...Z.hB,fontSize:12,padding:"6px 14px",minHeight:44,color:"#b095ff",borderColor:"rgba(120,90,255,.4)",background:"rgba(120,90,255,.12)"}}>→ 미리보기</button>
 <button onClick={()=>{sEditMode(false);sEditSrc(null)}} style={{...Z.hB,fontSize:14,padding:"6px 12px",minHeight:44,color:"#f66"}}>✕</button>
 </div>}
 
