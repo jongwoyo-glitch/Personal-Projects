@@ -651,13 +651,24 @@ function CI({c,i,t,onM,onE,onD,onSG,onAO,onEO,onDO}){
 const selOpt=(c.options||[]).find(o=>o.id===c.selected);
 const active=!!c.selected;
 const[open,setOpen]=React.useState(false);
+const[ddPos,setDdPos]=React.useState(null);
+const elRef=React.useRef(null);
+const toggleDD=()=>{
+  if(!open&&elRef.current){
+    const r=elRef.current.getBoundingClientRect();
+    const x=r.right+6;
+    const y=Math.min(r.top,window.innerHeight-340);
+    setDdPos({x,y});
+  }
+  setOpen(!open);
+};
 return(
-<div style={{background:active?"rgba(90,60,200,.12)":"rgba(255,255,255,.02)",border:`1px solid ${active?"rgba(120,90,255,.28)":"rgba(255,255,255,.06)"}`,borderRadius:8,padding:"10px 10px",marginBottom:6,transition:"all .15s"}}>
+<div ref={elRef} style={{position:"relative",background:active?"rgba(90,60,200,.12)":"rgba(255,255,255,.02)",border:`1px solid ${active?(open?"rgba(120,90,255,.5)":"rgba(120,90,255,.28)"):"rgba(255,255,255,.06)"}`,borderRadius:8,padding:"10px 10px",marginBottom:6,transition:"all .15s"}}>
 <div style={{display:"flex",alignItems:"center",gap:7}}>
 <div style={{display:"flex",flexDirection:"column",flexShrink:0,gap:2}}>
 <button onClick={()=>onM(c.id,-1)} disabled={i===0} style={{...Z.aV,opacity:i===0?.2:1}}>▲</button>
 <button onClick={()=>onM(c.id,1)} disabled={i===t-1} style={{...Z.aV,opacity:i===t-1?.2:1}}>▼</button></div>
-<div onClick={()=>setOpen(!open)} style={{flex:1,minWidth:0,cursor:"pointer",display:"flex",alignItems:"center",gap:6}}>
+<div onClick={toggleDD} style={{flex:1,minWidth:0,cursor:"pointer",display:"flex",alignItems:"center",gap:6}}>
 <span style={{fontSize:10,color:"#a88cff",fontWeight:700,flexShrink:0,transition:"transform .15s",transform:open?"rotate(90deg)":"rotate(0)"}}>▶</span>
 <div>
 <div style={{fontSize:13,fontWeight:600,color:active?"#c0b0ff":"#777"}}>{c.label}</div>
@@ -665,10 +676,17 @@ return(
 </div></div>
 <button onClick={()=>onE(c)} style={Z.tB}>✎</button>
 <button onClick={()=>onD(c.id)} style={{...Z.tB,color:"#f55"}}>✕</button></div>
-{open&&<div style={{marginTop:8,borderTop:"1px solid rgba(255,255,255,.06)",paddingTop:8}}>
+{/* Fixed dropdown - right side of chunk */}
+{open&&ddPos&&ReactDOM.createPortal(<React.Fragment>
+<div style={{position:"fixed",inset:0,zIndex:9990}} onClick={()=>setOpen(false)}/>
+<div style={{position:"fixed",left:ddPos.x,top:ddPos.y,zIndex:9991,
+  width:280,maxHeight:320,overflowY:"auto",WebkitOverflowScrolling:"touch",
+  background:"rgba(20,16,40,.97)",border:"1px solid rgba(120,90,255,.3)",borderRadius:10,
+  boxShadow:"0 8px 32px rgba(0,0,0,.6)",padding:8}}>
+<div style={{fontSize:11,fontWeight:700,color:"#a88cff",marginBottom:6,padding:"0 4px"}}>{c.label}</div>
 {(c.options||[]).map(o=>(
-<div key={o.id} style={{display:"flex",alignItems:"center",gap:8,padding:"6px 6px",borderRadius:6,cursor:"pointer",marginBottom:2,
-  background:c.selected===o.id?"rgba(120,90,255,.15)":"transparent"}} onClick={()=>onSG(c.id,c.selected===o.id?null:o.id)}>
+<div key={o.id} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 6px",borderRadius:6,cursor:"pointer",marginBottom:2,
+  background:c.selected===o.id?"rgba(120,90,255,.18)":"transparent"}} onClick={()=>onSG(c.id,c.selected===o.id?null:o.id)}>
 <div style={{width:18,height:18,borderRadius:9,border:c.selected===o.id?"none":"1.5px solid #555",background:c.selected===o.id?"#785aff":"transparent",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,color:"#fff",flexShrink:0}}>{c.selected===o.id?"●":""}</div>
 <div style={{flex:1,minWidth:0}}>
 <div style={{fontSize:12,fontWeight:500,color:c.selected===o.id?"#c0b0ff":"#888"}}>{o.name}</div>
@@ -678,7 +696,8 @@ return(
 <button onClick={e=>{e.stopPropagation();onDO(c.id,o.id)}} style={{...Z.tB,fontSize:9,color:"#f55"}}>✕</button>
 </div>))}
 <button onClick={()=>onAO(c.id)} style={{...Z.pB,width:"100%",height:30,fontSize:11,marginTop:4}}>+ 옵션 추가</button>
-</div>}
+</div>
+</React.Fragment>,document.body)}
 </div>)}
 
 /* ─── ColPanel ─── */
@@ -1984,7 +2003,13 @@ return(
 <div style={{display:"flex",flexDirection:"column",gap:3}} onClick={e=>e.stopPropagation()}>
 <button onClick={()=>oEC(ch)} style={{...Z.tB,width:32,height:32,fontSize:12,borderRadius:6}}>✎</button>
 <button onClick={()=>dC(ch.id)} style={{...Z.tB,width:32,height:32,fontSize:12,color:"#f55",borderRadius:6}}>✕</button></div></div>))}
-{chars.length===0&&<div style={{fontSize:10,color:"#444",padding:10,textAlign:"center"}}>캐릭터를 추가하세요</div>}</div></div>
+{chars.length===0&&<div style={{fontSize:10,color:"#444",padding:10,textAlign:"center"}}>캐릭터를 추가하세요</div>}</div>
+{/* Quick actions */}
+<div style={{padding:"8px 8px",borderTop:"1px solid rgba(255,255,255,.06)",display:"flex",flexDirection:"column",gap:4,flexShrink:0}}>
+<button onClick={uploadBaseImg} style={{...Z.hB,fontSize:11,padding:"7px 0",color:"#b095ff",borderColor:"rgba(120,90,255,.25)",width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>🖼 베이스 이미지</button>
+<button onClick={aVI} style={{...Z.hB,fontSize:11,padding:"7px 0",color:"#fa5",borderColor:"rgba(255,140,60,.25)",width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>🎨 바이브 트랜스퍼</button>
+</div>
+</div>
 
 <Rz panel="sidebar"/>
 
