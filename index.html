@@ -43,15 +43,14 @@ select option{background:#1a1a30;color:#ddd}
 @keyframes loadbar{0%{left:-40%;width:40%}50%{left:20%;width:60%}100%{left:100%;width:40%}}
 .gen-loadbar{position:fixed;top:0;left:0;right:0;height:3px;z-index:9999;overflow:hidden;background:rgba(120,90,255,.1)}
 .gen-loadbar::after{content:'';position:absolute;top:0;height:100%;background:linear-gradient(90deg,#785aff,#ff6b9d);animation:loadbar 1.5s ease-in-out infinite}
-.resizer{width:20px;cursor:col-resize;background:transparent;flex-shrink:0;position:relative;z-index:10;touch-action:none;margin:0 -7px}
-.resizer:active{background:rgba(120,90,255,.06)}
+.resizer{width:14px;cursor:pointer;background:transparent;flex-shrink:0;position:relative;z-index:10;touch-action:none;margin:0 -4px}
 .resizer::after{content:'';position:absolute;top:0;left:50%;transform:translateX(-50%);width:2px;height:100%;background:rgba(255,255,255,.06);border-radius:1px}
-.resizer:active::after{background:rgba(120,90,255,.4)}
-@media(hover:hover){.resizer:hover{background:rgba(120,90,255,.06)}.resizer:hover::after{background:rgba(120,90,255,.4)}}
-.rz-handle{position:absolute;top:0;left:50%;transform:translateX(-50%);width:24px;height:44px;background:rgba(120,90,255,.15);border-radius:0 0 8px 8px;cursor:col-resize;display:flex;align-items:center;justify-content:center;touch-action:none}
-.rz-handle:active{background:rgba(120,90,255,.5)}
-@media(hover:hover){.rz-handle:hover{background:rgba(120,90,255,.4)}}
-.rz-handle::after{content:'⋮';color:rgba(255,255,255,.4);font-size:14px;font-weight:700;line-height:1}
+.rz-handle{position:absolute;top:4px;left:50%;transform:translateX(-50%);width:28px;height:40px;background:rgba(120,90,255,.12);border-radius:6px;cursor:pointer;display:flex;align-items:center;justify-content:center;touch-action:manipulation;border:1px solid rgba(120,90,255,.15)}
+.rz-handle:active{background:rgba(120,90,255,.35)}
+@media(hover:hover){.rz-handle:hover{background:rgba(120,90,255,.3)}}
+.rz-handle::after{content:'⋮';color:rgba(255,255,255,.35);font-size:14px;font-weight:700;line-height:1}
+.rz-active{background:rgba(120,90,255,.4)!important;border-color:rgba(120,90,255,.6)!important}
+.rz-active::after{color:#fff!important}
 .spinner{width:16px;height:16px;border:2px solid rgba(120,90,255,.2);border-top-color:#785aff;border-radius:50%;animation:spin .8s linear infinite;display:inline-block}
 /* Scrollable panels - iOS momentum */
 .scroll-y{overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
@@ -754,41 +753,67 @@ const[i2iNoise,sI2iNoise]=useState(()=>parseFloat(localStorage.getItem("nai-pb-i
 useEffect(()=>{localStorage.setItem("nai-pb-i2i-str",i2iStrength)},[i2iStrength]);
 useEffect(()=>{localStorage.setItem("nai-pb-i2i-noise",i2iNoise)},[i2iNoise]);
 const[pw,sPw]=useState({sidebar:200,base:200,preview:300}); // panel widths
+const pwRef=useRef(pw);
+useEffect(()=>{pwRef.current=pw},[pw]);
+const[resizePanel,sResizePanel]=useState(null); // null | "sidebar" | "base" | "preview"
+const resizeDrag=useRef(null); // {startX, startW}
 
-// Resizer drag logic — Pointer Events + setPointerCapture (unified mouse/touch/pencil)
-const onResizeStart=(panel,e)=>{
-  e.preventDefault();e.stopPropagation();
-  const el=e.currentTarget;
-  const pid=e.pointerId;
-  if(pid!=null)el.setPointerCapture(pid);
-  const startX=e.clientX;
-  const startW=pw[panel];
-  let rafId=null,lastX=startX;
-  const onMove=ev=>{
-    lastX=ev.clientX;
+// Resizer: tap handle → enter resize mode → drag anywhere → tap to exit
+const rzOverlayRef=useRef(null);
+useEffect(()=>{
+  if(!resizePanel)return;
+  resizeDrag.current={startX:null,startW:pwRef.current[resizePanel]};
+  const limits={sidebar:[120,350],base:[140,400],preview:[180,600]};
+  const[mn,mx]=limits[resizePanel]||[100,500];
+  let rafId=null,lastX=null;
+  const onDown=e=>{
+    if(e.target.tagName==="BUTTON")return; // let buttons work
+    e.preventDefault();
+    resizeDrag.current.startX=e.clientX;
+    resizeDrag.current.startW=pwRef.current[resizePanel];
+    lastX=e.clientX;
+  };
+  const onMove=e=>{
+    if(resizeDrag.current.startX===null)return;
+    lastX=e.clientX;
     if(rafId)return;
     rafId=requestAnimationFrame(()=>{
       rafId=null;
-      const delta=lastX-startX;
-      const limits={sidebar:[120,350],base:[140,400],preview:[180,600]};
-      const[mn,mx]=limits[panel]||[100,500];
-      sPw(p=>({...p,[panel]:Math.max(mn,Math.min(mx,startW+delta))}));
+      const delta=lastX-resizeDrag.current.startX;
+      sPw(p=>({...p,[resizePanel]:Math.max(mn,Math.min(mx,resizeDrag.current.startW+delta))}));
     });
   };
-  const onUp=()=>{
+  const onUp=e=>{
     if(rafId){cancelAnimationFrame(rafId);rafId=null}
-    el.removeEventListener("pointermove",onMove);
-    el.removeEventListener("pointerup",onUp);
-    el.removeEventListener("pointercancel",onUp);
-    if(pid!=null)try{el.releasePointerCapture(pid)}catch{}
-    document.body.style.cursor="";document.body.style.userSelect="";
+    if(resizeDrag.current.startX!==null&&Math.abs(e.clientX-resizeDrag.current.startX)>5){
+      resizeDrag.current.startX=null;
+    }else{
+      sResizePanel(null);
+    }
   };
-  el.addEventListener("pointermove",onMove);
-  el.addEventListener("pointerup",onUp);
-  el.addEventListener("pointercancel",onUp);
-  document.body.style.cursor="col-resize";document.body.style.userSelect="none";
-};
-const Rz=({panel})=><div className="resizer" onPointerDown={e=>onResizeStart(panel,e)}><div className="rz-handle" onPointerDown={e=>{e.stopPropagation();onResizeStart(panel,e)}}/></div>;
+  const el=rzOverlayRef.current;
+  if(el){
+    el.addEventListener("pointerdown",onDown);
+    el.addEventListener("pointermove",onMove);
+    el.addEventListener("pointerup",onUp);
+    el.addEventListener("pointercancel",onUp);
+  }
+  return()=>{
+    if(el){
+      el.removeEventListener("pointerdown",onDown);
+      el.removeEventListener("pointermove",onMove);
+      el.removeEventListener("pointerup",onUp);
+      el.removeEventListener("pointercancel",onUp);
+    }
+    if(rafId)cancelAnimationFrame(rafId);
+  };
+},[resizePanel]);
+
+const panelLabels={sidebar:"캐릭터",base:"Base",preview:"미리보기"};
+const Rz=({panel})=><div className="resizer">
+  <div className={"rz-handle"+(resizePanel===panel?" rz-active":"")}
+    onClick={()=>sResizePanel(resizePanel===panel?null:panel)}/>
+</div>;
 const[anlas,sAnlas]=useState(null); // {anlas, tier, active}
 const[history,sHistory]=useState(()=>ll("nai-pb-hist",[]));
 const[page,sPage]=useState("gen");
@@ -1851,7 +1876,19 @@ return(
 <button onClick={()=>{sSt(false);sSo(true)}} style={{...Z.hB,background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",color:"#999",fontSize:20,padding:"8px 12px",position:"relative",minWidth:44,minHeight:44,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:8}}>⚙<span style={{width:8,height:8,borderRadius:"50%",background:se.apiToken?"#4c6":"#555",position:"absolute",top:4,right:4}}/></button></div></div>
 
 {/* BODY */}
-{page==="gen"&&<div style={{flex:1,display:"flex",overflow:"hidden"}}>
+{page==="gen"&&<div style={{flex:1,display:"flex",overflow:"hidden",position:"relative"}}>
+
+{/* Resize mode overlay — captures all drag when active */}
+{resizePanel&&<div ref={rzOverlayRef} style={{position:"absolute",inset:0,zIndex:50,cursor:"col-resize",touchAction:"none",
+  background:"rgba(120,90,255,.03)"}}>
+<div style={{position:"absolute",top:8,left:"50%",transform:"translateX(-50%)",
+  background:"rgba(20,16,40,.9)",border:"1px solid rgba(120,90,255,.3)",borderRadius:8,padding:"6px 16px",
+  display:"flex",alignItems:"center",gap:10,boxShadow:"0 4px 20px rgba(0,0,0,.4)"}}>
+<span style={{fontSize:11,color:"#b095ff",fontWeight:700}}>↔ {panelLabels[resizePanel]} 폭 조절</span>
+<span style={{fontSize:10,color:"#888",fontFamily:"monospace"}}>{pw[resizePanel]}px</span>
+<button onClick={e=>{e.stopPropagation();sResizePanel(null)}} style={{background:"rgba(255,60,60,.15)",border:"1px solid rgba(255,60,60,.2)",borderRadius:4,color:"#f88",fontSize:10,padding:"2px 8px",cursor:"pointer"}}>완료</button>
+</div>
+</div>}
 
 {/* LEFT SIDEBAR - Characters */}
 <div className="sidebar" style={{width:pw.sidebar,minWidth:120,borderRight:"none",display:"flex",flexDirection:"column",flexShrink:0}}>
@@ -2337,19 +2374,21 @@ return(
 </div>
 </React.Fragment>}
 {/* Left Sidebar - Edit Tools + Colors */}
-{editMode==="edit"&&<div style={{width:62,background:"rgba(15,12,30,.95)",borderRight:"1px solid rgba(90,180,255,.1)",display:"flex",flexDirection:"column",alignItems:"center",gap:2,padding:"6px 2px",flexShrink:0,overflowY:"auto"}}>
+{editMode==="edit"&&<div style={{width:66,background:"rgba(15,12,30,.95)",borderRight:"1px solid rgba(90,180,255,.1)",display:"flex",flexDirection:"column",alignItems:"center",gap:2,padding:"6px 2px",flexShrink:0,overflowY:"auto"}}>
 {[["brush","🖌"],["eraser","🧹"],["eyedropper","💧"],["blur","🌫"],["wand","🪄"]].map(([t,icon])=>
-<button key={t} onClick={()=>sEditTool(t)}
-  onDoubleClick={e=>{const r=e.currentTarget.getBoundingClientRect();shortcutModalPos.current={x:r.right+8,y:r.top};sShortcutModal(t)}}
-  onContextMenu={e=>{e.preventDefault();const r=e.currentTarget.getBoundingClientRect();shortcutModalPos.current={x:r.right+8,y:r.top};sShortcutModal(t)}}
-  style={{...Z.hB,fontSize:13,width:54,height:54,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:1,padding:2,position:"relative",
+<div key={t} style={{display:"flex",alignItems:"center",gap:1,position:"relative"}}>
+<button onClick={()=>sEditTool(t)}
+  style={{...Z.hB,fontSize:13,width:46,height:46,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:1,padding:2,
   background:editTool===t?"rgba(90,180,255,.25)":"transparent",
   borderColor:editTool===t?"rgba(90,180,255,.4)":"rgba(255,255,255,.1)",
   color:editTool===t?"#5cb8ff":"#888"}}>
   <span style={{fontSize:15,lineHeight:1}}>{icon}</span>
   <span style={{fontSize:7,lineHeight:1,opacity:.8}}>{editToolNames[t]}</span>
-  {editShortcuts[t]&&<span style={{position:"absolute",top:1,right:1,fontSize:7,background:"rgba(90,180,255,.35)",color:"#cde",borderRadius:2,padding:"0 2px",lineHeight:"11px",fontFamily:"monospace"}}>{editShortcuts[t].toUpperCase()}</span>}
-</button>)}
+  {editShortcuts[t]&&<span style={{position:"absolute",top:0,left:0,fontSize:7,background:"rgba(90,180,255,.35)",color:"#cde",borderRadius:2,padding:"0 2px",lineHeight:"11px",fontFamily:"monospace"}}>{editShortcuts[t].toUpperCase()}</span>}
+</button>
+<button onClick={e=>{const r=e.currentTarget.parentElement.getBoundingClientRect();shortcutModalPos.current={x:r.right+4,y:r.top};sShortcutModal(t)}}
+  style={{background:"none",border:"none",color:"#555",fontSize:9,cursor:"pointer",padding:"2px",width:14,height:46,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,lineHeight:1}}>⋮</button>
+</div>)}
 <div style={{width:32,height:1,background:"rgba(255,255,255,.08)",margin:"2px 0"}}/>
 <div style={{display:"flex",gap:3,alignItems:"center",justifyContent:"center"}}>
 <div onClick={()=>sShowCW(true)} style={{width:32,height:32,borderRadius:6,background:editTransparent?"transparent":editColor,cursor:"pointer",border:editTransparent?"2px solid rgba(255,255,255,.15)":"2px solid rgba(255,255,255,.3)",flexShrink:0,
