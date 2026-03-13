@@ -1957,21 +1957,38 @@ return(
 {ts&&<div style={{position:"fixed",top:14,left:"50%",transform:"translateX(-50%)",zIndex:9999,background:"#785aff",color:"#fff",padding:"7px 18px",borderRadius:7,fontSize:12,fontWeight:600,boxShadow:"0 4px 20px rgba(0,0,0,.4)"}}>{ts}</div>}
 
 {/* HEADER */}
-<div style={{padding:"14px 18px",borderBottom:"1px solid rgba(120,90,255,.15)",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
-<div><h1 style={{margin:0,fontSize:20,fontWeight:700,background:"linear-gradient(135deg,#b095ff,#785aff,#ff6b9d)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",display:"inline"}}>NAI Prompt Builder</h1>
-<div style={{display:"flex",gap:2,marginTop:6}}>
-<button onClick={()=>sPage("gen")} style={{fontSize:11,fontWeight:600,padding:"4px 14px",borderRadius:"6px 6px 0 0",border:"1px solid rgba(120,90,255,.15)",borderBottom:page==="gen"?"1px solid transparent":"1px solid rgba(120,90,255,.15)",background:page==="gen"?"rgba(120,90,255,.1)":"transparent",color:page==="gen"?"#b095ff":"#555",cursor:"pointer"}}>🎨 생성</button>
-<button onClick={()=>sPage("post")} style={{fontSize:11,fontWeight:600,padding:"4px 14px",borderRadius:"6px 6px 0 0",border:"1px solid rgba(120,90,255,.15)",borderBottom:page==="post"?"1px solid transparent":"1px solid rgba(120,90,255,.15)",background:page==="post"?"rgba(120,90,255,.1)":"transparent",color:page==="post"?"#b095ff":"#555",cursor:"pointer"}}>📋 후처리 <span style={{fontSize:9,opacity:.7}}>({history.length})</span></button>
-</div></div>
-<div style={{display:"flex",gap:8,alignItems:"center"}}>
-{anlas!==null&&typeof anlas.anlas==="number"&&<div className="anlas-badge" title="API 조회">💎 {anlas.anlas.toLocaleString()}</div>}
-{(anlas===null||typeof anlas.anlas!=="number")&&<div className="anlas-badge">💎 {(se.anlasBalance||0).toLocaleString()}</div>}
-<div style={{fontSize:9,padding:"2px 6px",borderRadius:8,fontWeight:700,
+<div style={{padding:"10px 18px",borderBottom:"1px solid rgba(120,90,255,.15)",display:"flex",alignItems:"center",gap:14,flexShrink:0}}>
+<h1 style={{margin:0,fontSize:17,fontWeight:700,background:"linear-gradient(135deg,#b095ff,#785aff,#ff6b9d)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",display:"inline",flexShrink:0,whiteSpace:"nowrap"}}>NAI Prompt Builder</h1>
+
+<div style={{flex:1}}/>
+
+{/* Gen group: 생성 | 베이스 | 바이브 */}
+<div style={{display:"flex",borderRadius:8,overflow:"hidden",border:"1px solid rgba(120,90,255,.2)",flexShrink:0}}>
+<button onClick={()=>sPage("gen")} style={{fontSize:11,fontWeight:600,padding:"6px 12px",border:"none",borderRight:"1px solid rgba(120,90,255,.15)",
+  background:page==="gen"?"rgba(120,90,255,.18)":"transparent",color:page==="gen"?"#b095ff":"#666",cursor:"pointer"}}>🎨 생성</button>
+<button onClick={uploadBaseImg} style={{fontSize:11,fontWeight:600,padding:"6px 12px",border:"none",borderRight:"1px solid rgba(120,90,255,.15)",
+  background:baseImg?"rgba(120,90,255,.1)":"transparent",color:baseImg?"#b095ff":"#666",cursor:"pointer"}}>🖼 베이스</button>
+<button onClick={aVI} style={{fontSize:11,fontWeight:600,padding:"6px 12px",border:"none",
+  background:vibeRefs.length>0?"rgba(255,140,60,.1)":"transparent",color:vibeRefs.length>0?"#fa5":"#666",cursor:"pointer"}}>🎨 바이브{vibeRefs.length>0&&<span style={{fontSize:9,marginLeft:3,opacity:.7}}>({vibeRefs.length})</span>}</button>
+</div>
+
+{/* 후처리 */}
+<button onClick={()=>sPage("post")} style={{fontSize:11,fontWeight:600,padding:"6px 14px",borderRadius:8,
+  border:"1px solid rgba(120,90,255,.15)",
+  background:page==="post"?"rgba(120,90,255,.18)":"transparent",color:page==="post"?"#b095ff":"#666",cursor:"pointer",flexShrink:0}}>📋 후처리 <span style={{fontSize:9,opacity:.7}}>({history.length})</span></button>
+
+{/* 설정 + 등급 + Anlas */}
+<button onClick={()=>{sSt(false);sSo(true)}} style={{...Z.hB,background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",color:"#999",fontSize:18,padding:"6px 10px",position:"relative",minWidth:38,minHeight:38,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:8,flexShrink:0}}>⚙<span style={{width:7,height:7,borderRadius:"50%",background:se.apiToken?"#4c6":"#555",position:"absolute",top:3,right:3}}/></button>
+<div style={{fontSize:9,padding:"3px 8px",borderRadius:8,fontWeight:700,flexShrink:0,
   background:se.tier>=3?"rgba(80,200,100,.1)":se.tier>=1?"rgba(255,180,60,.1)":"rgba(255,255,255,.05)",
   color:se.tier>=3?"#5c5":se.tier>=1?"#da5":"#888",
   border:`1px solid ${se.tier>=3?"rgba(80,200,100,.2)":se.tier>=1?"rgba(255,180,60,.2)":"rgba(255,255,255,.08)"}`
 }}>{["Free","Tablet","Scroll","Opus"][se.tier]||"?"}</div>
-<button onClick={()=>{sSt(false);sSo(true)}} style={{...Z.hB,background:"rgba(255,255,255,.06)",border:"1px solid rgba(255,255,255,.1)",color:"#999",fontSize:20,padding:"8px 12px",position:"relative",minWidth:44,minHeight:44,display:"flex",alignItems:"center",justifyContent:"center",borderRadius:8}}>⚙<span style={{width:8,height:8,borderRadius:"50%",background:se.apiToken?"#4c6":"#555",position:"absolute",top:4,right:4}}/></button></div></div>
+{anlas!==null&&typeof anlas.anlas==="number"?<div className="anlas-badge" title="API 조회">💎 {anlas.anlas.toLocaleString()}</div>
+:<div className="anlas-badge">💎 {(se.anlasBalance||0).toLocaleString()}</div>}
+
+<div style={{flex:1}}/>
+</div>
 
 {/* BODY */}
 {page==="gen"&&<div style={{flex:1,display:"flex",overflow:"hidden",position:"relative"}}>
@@ -1990,9 +2007,9 @@ return(
 
 {/* LEFT SIDEBAR - Characters */}
 <div className="sidebar" style={{width:pw.sidebar,minWidth:120,borderRight:"none",display:"flex",flexDirection:"column",flexShrink:0}}>
-<div style={{padding:"12px 12px 8px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+<div style={{padding:"12px 12px 8px",display:"flex",alignItems:"center",gap:6}}>
 <span style={{fontSize:13,fontWeight:700,color:"#888"}}>캐릭터</span>
-<button onClick={oAC} style={{...Z.pB,fontSize:14,width:36,height:36,borderRadius:8}}>+</button></div>
+<button onClick={oAC} style={{...Z.pB,fontSize:12,width:28,height:28,borderRadius:6}}>+</button></div>
 <div className="scroll-y" style={{flex:1,padding:"0 8px 8px"}}>
 {chars.map(ch=>(
 <div key={ch.id} className={`cc${activeIds.includes(ch.id)?" on":""}`} onClick={()=>toggleChar(ch.id)}>
@@ -2004,11 +2021,6 @@ return(
 <button onClick={()=>oEC(ch)} style={{...Z.tB,width:32,height:32,fontSize:12,borderRadius:6}}>✎</button>
 <button onClick={()=>dC(ch.id)} style={{...Z.tB,width:32,height:32,fontSize:12,color:"#f55",borderRadius:6}}>✕</button></div></div>))}
 {chars.length===0&&<div style={{fontSize:10,color:"#444",padding:10,textAlign:"center"}}>캐릭터를 추가하세요</div>}</div>
-{/* Quick actions */}
-<div style={{padding:"8px 8px",borderTop:"1px solid rgba(255,255,255,.06)",display:"flex",flexDirection:"column",gap:4,flexShrink:0}}>
-<button onClick={uploadBaseImg} style={{...Z.hB,fontSize:11,padding:"7px 0",color:"#b095ff",borderColor:"rgba(120,90,255,.25)",width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>🖼 베이스 이미지</button>
-<button onClick={aVI} style={{...Z.hB,fontSize:11,padding:"7px 0",color:"#fa5",borderColor:"rgba(255,140,60,.25)",width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:4}}>🎨 바이브 트랜스퍼</button>
-</div>
 </div>
 
 <Rz panel="sidebar"/>
