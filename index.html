@@ -2328,21 +2328,25 @@ return(
 </div>
 </React.Fragment>}
 {/* Left Sidebar - Edit Tools + Colors */}
-{editMode==="edit"&&<div style={{width:66,background:"rgba(15,12,30,.95)",borderRight:"1px solid rgba(90,180,255,.1)",display:"flex",flexDirection:"column",alignItems:"center",gap:2,padding:"6px 2px",flexShrink:0,overflowY:"auto"}}>
-{[["brush","🖌"],["eraser","🧹"],["eyedropper","💧"],["blur","🌫"],["wand","🪄"]].map(([t,icon])=>
-<div key={t} style={{display:"flex",alignItems:"center",gap:1,position:"relative"}}>
-<button onClick={()=>sEditTool(t)}
-  style={{...Z.hB,fontSize:13,width:46,height:46,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:1,padding:2,
-  background:editTool===t?"rgba(90,180,255,.25)":"transparent",
-  borderColor:editTool===t?"rgba(90,180,255,.4)":"rgba(255,255,255,.1)",
-  color:editTool===t?"#5cb8ff":"#888"}}>
-  <span style={{fontSize:15,lineHeight:1}}>{icon}</span>
-  <span style={{fontSize:7,lineHeight:1,opacity:.8}}>{editToolNames[t]}</span>
-  {editShortcuts[t]&&<span style={{position:"absolute",top:0,left:0,fontSize:7,background:"rgba(90,180,255,.35)",color:"#cde",borderRadius:2,padding:"0 2px",lineHeight:"11px",fontFamily:"monospace"}}>{editShortcuts[t].toUpperCase()}</span>}
-</button>
-<button onClick={e=>{const r=e.currentTarget.parentElement.getBoundingClientRect();shortcutModalPos.current={x:r.right+4,y:r.top};sShortcutModal(t)}}
-  style={{background:"none",border:"none",color:"#555",fontSize:9,cursor:"pointer",padding:"2px",width:14,height:46,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,lineHeight:1}}>⋮</button>
-</div>)}
+{editMode==="edit"&&<div style={{width:62,background:"rgba(15,12,30,.95)",borderRight:"1px solid rgba(90,180,255,.1)",display:"flex",flexDirection:"column",alignItems:"center",gap:3,padding:"6px 4px",flexShrink:0,overflowY:"auto"}}>
+{[["brush","🖌"],["eraser","🧹"],["eyedropper","💧"],["blur","🌫"],["wand","🪄"]].map(([t,icon])=>{
+const active=editTool===t;
+const bg=active?"rgba(90,180,255,.25)":"rgba(255,255,255,.03)";
+const bc=active?"rgba(90,180,255,.4)":"rgba(255,255,255,.08)";
+const fg=active?"#5cb8ff":"#888";
+return <div key={t} style={{borderRadius:8,border:`1px solid ${bc}`,background:bg,overflow:"hidden",width:54,display:"flex",flexDirection:"row"}}>
+{/* Shortcut area - left */}
+<div onClick={e=>{const r=e.currentTarget.parentElement.getBoundingClientRect();shortcutModalPos.current={x:r.right+6,y:r.top};sShortcutModal(t)}}
+  style={{display:"flex",alignItems:"center",justifyContent:"center",width:14,flexShrink:0,cursor:"pointer",color:active?"rgba(90,180,255,.6)":"rgba(255,255,255,.2)",fontSize:8,fontWeight:700}}>⋮</div>
+{/* Divider */}
+<div style={{width:1,alignSelf:"stretch",background:active?"rgba(90,180,255,.25)":"rgba(255,255,255,.06)"}}/>
+{/* Tool area - right */}
+<div onClick={()=>sEditTool(t)} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:1,padding:"5px 2px",cursor:"pointer",position:"relative",minHeight:40}}>
+  <span style={{fontSize:16,lineHeight:1,color:fg}}>{icon}</span>
+  <span style={{fontSize:7,lineHeight:1,color:fg,opacity:.8}}>{editToolNames[t]}</span>
+  {editShortcuts[t]&&<span style={{position:"absolute",top:2,right:2,fontSize:7,background:"rgba(90,180,255,.4)",color:"#cde",borderRadius:2,padding:"0 3px",lineHeight:"11px",fontFamily:"monospace",fontWeight:600}}>{editShortcuts[t].toUpperCase()}</span>}
+</div>
+</div>})}
 <div style={{width:32,height:1,background:"rgba(255,255,255,.08)",margin:"2px 0"}}/>
 <div style={{display:"flex",gap:3,alignItems:"center",justifyContent:"center"}}>
 <div onClick={()=>sShowCW(true)} style={{width:32,height:32,borderRadius:6,background:editTransparent?"transparent":editColor,cursor:"pointer",border:editTransparent?"2px solid rgba(255,255,255,.15)":"2px solid rgba(255,255,255,.3)",flexShrink:0,
