@@ -768,11 +768,20 @@ const handleDragOver=(e)=>{e.preventDefault();e.stopPropagation()};
 /* ── Inpaint Canvas Helpers ── */
 const ipDrawing=useRef(false);
 const ipLastPos=useRef(null);
+// NAI-style grid-snapped block brush with real-time border
+const IP_GRID=8;
+const ipGridRef=useRef(null); // Uint8Array grid: 1=filled, 0=empty
+const ipGridW=useRef(0);
+const ipGridH=useRef(0);
+
 const initIpCanvas=useCallback(()=>{
   const cv=ipCanvasRef.current;const img=ipImgRef.current;
   if(!cv||!img)return;
   cv.width=se.width;cv.height=se.height;
   const ctx=cv.getContext("2d");ctx.clearRect(0,0,cv.width,cv.height);
+  const gw=Math.ceil(se.width/IP_GRID),gh=Math.ceil(se.height/IP_GRID);
+  ipGridRef.current=new Uint8Array(gw*gh);
+  ipGridW.current=gw;ipGridH.current=gh;
   ipHistoryRef.current=[];ipLastPos.current=null;
 },[se.width,se.height]);
 
@@ -785,76 +794,99 @@ const getIpXY=(e)=>{
   return{x:(t.clientX-r.left)/r.width*cv.width,y:(t.clientY-r.top)/r.height*cv.height};
 };
 const ipSaveSnap=()=>{
-  const cv=ipCanvasRef.current;if(!cv)return;
-  ipHistoryRef.current.push(cv.getContext("2d").getImageData(0,0,cv.width,cv.height));
+  const g=ipGridRef.current;if(!g)return;
+  ipHistoryRef.current.push(new Uint8Array(g));
   if(ipHistoryRef.current.length>30)ipHistoryRef.current.shift();
 };
-// NAI-style grid-snapped block brush
-const IP_GRID=8; // pixel grid size — mask paints in 8px blocks
-const ipStampGrid=(ctx,x,y,brushSize,erase)=>{
-  const g=IP_GRID;
-  const half=Math.floor(brushSize/2);
-  // Snap brush area to grid
-  const gx0=Math.floor((Math.round(x)-half)/g)*g;
-  const gy0=Math.floor((Math.round(y)-half)/g)*g;
-  const gx1=Math.ceil((Math.round(x)+half)/g)*g;
-  const gy1=Math.ceil((Math.round(y)+half)/g)*g;
-  ctx.globalCompositeOperation=erase?"destination-out":"source-over";
-  ctx.fillStyle=erase?"rgba(0,0,0,1)":"rgba(80,110,255,1)";
-  for(let by=gy0;by<gy1;by+=g){
-    for(let bx=gx0;bx<gx1;bx+=g){
-      ctx.fillRect(bx,by,g,g);
+
+const ipRender=()=>{
+  const cv=ipCanvasRef.current;const g=ipGridRef.current;
+  if(!cv||!g)return;
+  const ctx=cv.getContext("2d");
+  const gw=ipGridW.current,gh=ipGridH.current,gs=IP_GRID;
+  ctx.clearRect(0,0,cv.width,cv.height);
+  ctx.imageSmoothingEnabled=false;
+  const B=2; // border inset pixels
+  for(let gy=0;gy<gh;gy++){for(let gx=0;gx<gw;gx++){
+    if(!g[gy*gw+gx])continue;
+    // Check 4 neighbors for border detection
+    const up=gy>0&&g[(gy-1)*gw+gx];
+    const dn=gy<gh-1&&g[(gy+1)*gw+gx];
+    const lt=gx>0&&g[gy*gw+gx-1];
+    const rt=gx<gw-1&&g[gy*gw+gx+1];
+    const isBorder=!up||!dn||!lt||!rt;
+    const px=gx*gs,py=gy*gs;
+    if(isBorder){
+      // Dark border for entire cell
+      ctx.fillStyle="rgba(50,70,200,1)";
+      ctx.fillRect(px,py,gs,gs);
+      // Lighter fill inset only on non-edge sides
+      const t=up?0:B,b=dn?0:B,l=lt?0:B,r=rt?0:B;
+      if(gs-l-r>0&&gs-t-b>0){
+        ctx.fillStyle="rgba(100,140,255,1)";
+        ctx.fillRect(px+l,py+t,gs-l-r,gs-t-b);
+      }
+    }else{
+      ctx.fillStyle="rgba(100,140,255,1)";
+      ctx.fillRect(px,py,gs,gs);
     }
-  }
+  }}
+};
+
+const ipStampGrid=(x,y,brushSize,erase)=>{
+  const g=ipGridRef.current;if(!g)return;
+  const gw=ipGridW.current,gh=ipGridH.current,gs=IP_GRID;
+  const half=Math.floor(brushSize/2);
+  const gx0=Math.max(0,Math.floor((Math.round(x)-half)/gs));
+  const gy0=Math.max(0,Math.floor((Math.round(y)-half)/gs));
+  const gx1=Math.min(gw,Math.ceil((Math.round(x)+half)/gs));
+  const gy1=Math.min(gh,Math.ceil((Math.round(y)+half)/gs));
+  const val=erase?0:1;
+  for(let gy=gy0;gy<gy1;gy++){for(let gx=gx0;gx<gx1;gx++){g[gy*gw+gx]=val}}
+  ipRender();
 };
 const ipStartDraw=(e)=>{
   e.preventDefault();ipSaveSnap();ipDrawing.current=true;
   const p=getIpXY(e);ipLastPos.current=p;
-  const cv=ipCanvasRef.current;if(!cv)return;
-  const ctx=cv.getContext("2d");
-  ctx.imageSmoothingEnabled=false;
-  ipStampGrid(ctx,p.x,p.y,ipBrush,ipErase);
+  ipStampGrid(p.x,p.y,ipBrush,ipErase);
 };
 const ipDraw=(e)=>{
   e.preventDefault();if(!ipDrawing.current)return;
-  const cv=ipCanvasRef.current;if(!cv)return;
-  const ctx=cv.getContext("2d");const p=getIpXY(e);
-  ctx.imageSmoothingEnabled=false;
-  // Bresenham interpolation with grid stamps
+  const p=getIpXY(e);
   if(ipLastPos.current){
     const x0=Math.round(ipLastPos.current.x),y0=Math.round(ipLastPos.current.y);
     const x1=Math.round(p.x),y1=Math.round(p.y);
-    const step=IP_GRID;
     const dx=Math.abs(x1-x0),dy=Math.abs(y1-y0);
     const dist=Math.max(dx,dy);
-    const steps=Math.max(1,Math.ceil(dist/step));
+    const steps=Math.max(1,Math.ceil(dist/IP_GRID));
     for(let i=0;i<=steps;i++){
       const t=steps===0?0:i/steps;
-      const cx=x0+(x1-x0)*t,cy=y0+(y1-y0)*t;
-      ipStampGrid(ctx,cx,cy,ipBrush,ipErase);
+      ipStampGrid(x0+(x1-x0)*t,y0+(y1-y0)*t,ipBrush,ipErase);
     }
   }
   ipLastPos.current=p;
 };
 const ipStopDraw=()=>{ipDrawing.current=false;ipLastPos.current=null};
-const ipClear=()=>{const cv=ipCanvasRef.current;if(cv)cv.getContext("2d").clearRect(0,0,cv.width,cv.height);ipHistoryRef.current=[]};
+const ipClear=()=>{const g=ipGridRef.current;if(g)g.fill(0);ipRender();ipHistoryRef.current=[]};
 const ipUndo=()=>{
-  const cv=ipCanvasRef.current;if(!cv)return;
-  const h=ipHistoryRef.current;if(h.length===0){cv.getContext("2d").clearRect(0,0,cv.width,cv.height)}
-  else{cv.getContext("2d").putImageData(h.pop(),0,0)}
+  const h=ipHistoryRef.current;
+  if(h.length===0){if(ipGridRef.current)ipGridRef.current.fill(0)}
+  else{const snap=h.pop();if(ipGridRef.current&&snap)ipGridRef.current.set(snap)}
+  ipRender();
 };
 const getMaskB64=()=>{
-  const cv=ipCanvasRef.current;if(!cv)return null;
-  const w=cv.width,h=cv.height;
-  const src=cv.getContext("2d").getImageData(0,0,w,h);
+  const g=ipGridRef.current;if(!g)return null;
+  const w=se.width,h=se.height,gs=IP_GRID;
+  const gw=ipGridW.current,gh=ipGridH.current;
   const out=document.createElement("canvas");out.width=w;out.height=h;
-  const octx=out.getContext("2d");const od=octx.createImageData(w,h);
-  // Clean binary mask: white = inpaint area, black = keep (no AA with square brush)
-  for(let i=0;i<src.data.length;i+=4){
-    const hasMask=src.data[i+2]>128&&src.data[i+3]>128;
-    od.data[i]=od.data[i+1]=od.data[i+2]=hasMask?255:0;od.data[i+3]=255;
-  }
-  octx.putImageData(od,0,0);
+  const octx=out.getContext("2d");octx.imageSmoothingEnabled=false;
+  // Black background
+  octx.fillStyle="#000";octx.fillRect(0,0,w,h);
+  // White = inpaint area
+  octx.fillStyle="#fff";
+  for(let gy=0;gy<gh;gy++){for(let gx=0;gx<gw;gx++){
+    if(g[gy*gw+gx])octx.fillRect(gx*gs,gy*gs,gs,gs);
+  }}
   return out.toDataURL("image/png").replace(/^data:image\/png;base64,/,"");
 };
 const getImgB64=async()=>{
@@ -871,27 +903,35 @@ const applyIpMask=()=>{
   const maskB64=getMaskB64();
   if(!maskB64){tw("⚠ 마스크를 그려주세요");return}
   sIPMaskB64(maskB64);
-  // Create visual overlay with border from grid-block mask
-  const cv=ipCanvasRef.current;if(cv){
-    const w=cv.width,h=cv.height;
-    const src=cv.getContext("2d").getImageData(0,0,w,h);
-    const mask=new Uint8Array(w*h);
-    for(let i=0;i<src.data.length;i+=4)mask[i/4]=(src.data[i+2]>128&&src.data[i+3]>128)?1:0;
-    // Border = mask pixels adjacent to non-mask (inward, 2px)
+  // Create visual overlay with border from grid
+  const g=ipGridRef.current;
+  if(g){
+    const w=se.width,h=se.height,gs=IP_GRID;
+    const gw=ipGridW.current,gh=ipGridH.current;
     const vis=document.createElement("canvas");vis.width=w;vis.height=h;
-    const vctx=vis.getContext("2d");const vd=vctx.createImageData(w,h);
-    for(let y=0;y<h;y++){for(let x=0;x<w;x++){
-      const idx=y*w+x;
-      if(!mask[idx])continue;
-      let isBorder=false;
-      for(let d=1;d<=2&&!isBorder;d++){
-        if(x-d<0||!mask[idx-d]||x+d>=w||!mask[idx+d]||y-d<0||!mask[(y-d)*w+x]||y+d>=h||!mask[(y+d)*w+x])isBorder=true;
+    const vctx=vis.getContext("2d");vctx.imageSmoothingEnabled=false;
+    const B=2;
+    for(let gy=0;gy<gh;gy++){for(let gx=0;gx<gw;gx++){
+      if(!g[gy*gw+gx])continue;
+      const up=gy>0&&g[(gy-1)*gw+gx];
+      const dn=gy<gh-1&&g[(gy+1)*gw+gx];
+      const lt=gx>0&&g[gy*gw+gx-1];
+      const rt=gx<gw-1&&g[gy*gw+gx+1];
+      const isBorder=!up||!dn||!lt||!rt;
+      const px=gx*gs,py=gy*gs;
+      if(isBorder){
+        vctx.fillStyle="rgba(50,70,200,0.7)";
+        vctx.fillRect(px,py,gs,gs);
+        const t=up?0:B,b=dn?0:B,l=lt?0:B,r=rt?0:B;
+        if(gs-l-r>0&&gs-t-b>0){
+          vctx.fillStyle="rgba(100,140,255,0.3)";
+          vctx.fillRect(px+l,py+t,gs-l-r,gs-t-b);
+        }
+      }else{
+        vctx.fillStyle="rgba(100,140,255,0.3)";
+        vctx.fillRect(px,py,gs,gs);
       }
-      const pi=idx*4;
-      vd.data[pi]=80;vd.data[pi+1]=110;vd.data[pi+2]=255;
-      vd.data[pi+3]=isBorder?190:70;
     }}
-    vctx.putImageData(vd,0,0);
     sIPMaskUrl(vis.toDataURL("image/png"));
   }
   sIPE(false);
