@@ -1185,29 +1185,42 @@ const initEditCanvas=useCallback(()=>{
   editLayerCanvases.current={};editStrokeCanvas.current=null;
   sEditLayers([]);sEditActiveLayer(null);editHistoryRef.current=[];
   sEditZoom(1);sEditPan({x:0,y:0});
-  setTimeout(()=>{
-    // Source layer: canvas with original image baked in (fully editable)
-    const srcId=G();
-    const srcCv=document.createElement("canvas");srcCv.width=se.width;srcCv.height=se.height;
-    // Draw original image onto source canvas once loaded
-    const tmpImg=new Image();tmpImg.crossOrigin="anonymous";
-    tmpImg.onload=()=>{srcCv.getContext("2d").drawImage(tmpImg,0,0,se.width,se.height);compositeEdit()};
-    tmpImg.src=editSrc||genImg||"";
-    editLayerCanvases.current[srcId]=srcCv;
-    // Empty paint layer on top
-    const layerId=G();
-    const cv=document.createElement("canvas");cv.width=se.width;cv.height=se.height;
-    editLayerCanvases.current[layerId]=cv;
-    sEditLayers([
-      {id:srcId,name:"🖼 원본",visible:true,type:"source"},
-      {id:layerId,name:"레이어 1",visible:true,type:"paint"}
-    ]);
-    sEditActiveLayer(srcId);
-  },50);
+  // Create canvases
+  const srcId=G();
+  const srcCv=document.createElement("canvas");srcCv.width=se.width;srcCv.height=se.height;
+  editLayerCanvases.current[srcId]=srcCv;
+  const layerId=G();
+  const cv=document.createElement("canvas");cv.width=se.width;cv.height=se.height;
+  editLayerCanvases.current[layerId]=cv;
+  sEditLayers([
+    {id:srcId,name:"🖼 원본",visible:true,type:"source"},
+    {id:layerId,name:"레이어 1",visible:true,type:"paint"}
+  ]);
+  sEditActiveLayer(srcId);
 },[se.width,se.height]);
 
 const editImg=editSrc||genImg;
 useEffect(()=>{if(editMode&&editImg)initEditCanvas()},[editMode,editImg,initEditCanvas]);
+
+// Bake source image into source layer canvas when img element loads (once per edit session)
+const srcBaked=useRef(false);
+useEffect(()=>{srcBaked.current=false},[editMode,editImg]); // reset on new edit session
+useEffect(()=>{
+  if(!editMode||!editImg||srcBaked.current)return;
+  const srcLayer=editLayers.find(l=>l.type==="source");
+  if(!srcLayer)return;
+  const srcCv=editLayerCanvases.current[srcLayer.id];
+  if(!srcCv)return;
+  const img=editImgRef.current;
+  if(!img)return;
+  const draw=()=>{
+    srcCv.getContext("2d").drawImage(img,0,0,se.width,se.height);
+    srcBaked.current=true;
+    compositeEdit();
+  };
+  if(img.complete&&img.naturalWidth>0)draw();
+  else img.addEventListener("load",draw,{once:true});
+},[editMode,editImg,editLayers]);
 
 // Helper: draw all layers in order to a context
 const drawAllLayers=(ctx)=>{
