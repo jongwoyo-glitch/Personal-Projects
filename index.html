@@ -433,7 +433,8 @@ function ColorWheel({color,onChange,onClose}){
   const onWheelClick=(e)=>{
     const cv=wheelRef.current;if(!cv)return;
     const r=cv.getBoundingClientRect();
-    const x=e.clientX-r.left-cv.width/2,y=e.clientY-r.top-cv.height/2;
+    const tt=e.touches?e.touches[0]:e;const cx=tt.clientX,cy=tt.clientY;
+    const x=cx-r.left-cv.width/2,y=cy-r.top-cv.height/2;
     const dist=Math.sqrt(x*x+y*y),sz=cv.width/2;
     if(dist<sz-26){/* inside SV area, ignore */return}
     if(dist>sz)return;
@@ -443,8 +444,9 @@ function ColorWheel({color,onChange,onClose}){
   const onSVClick=(e)=>{
     const cv=svRef.current;if(!cv)return;
     const r=cv.getBoundingClientRect();
-    const s=Math.max(0,Math.min(1,(e.clientX-r.left)/cv.width));
-    const v=Math.max(0,Math.min(1,1-(e.clientY-r.top)/cv.height));
+    const tt=e.touches?e.touches[0]:e;const cx=tt.clientX,cy=tt.clientY;
+    const s=Math.max(0,Math.min(1,(cx-r.left)/cv.width));
+    const v=Math.max(0,Math.min(1,1-(cy-r.top)/cv.height));
     const nw={...hsv,s,v};sHsv(nw);onChange(hsv2hex(nw.h,nw.s,nw.v));
   };
   const wheelDrag=useRef(false),svDrag=useRef(false);
@@ -452,16 +454,22 @@ function ColorWheel({color,onChange,onClose}){
   return(
   <div style={{position:"fixed",zIndex:10001,top:"50%",left:"50%",transform:"translate(-50%,-50%)",background:"#1a1428",borderRadius:12,padding:16,boxShadow:"0 8px 40px rgba(0,0,0,.6)",border:"1px solid rgba(90,180,255,.2)",display:"flex",flexDirection:"column",alignItems:"center",gap:10}} onClick={e=>e.stopPropagation()}>
     <div style={{position:"relative",width:200,height:200}}>
-      <canvas ref={wheelRef} width={200} height={200} style={{position:"absolute",inset:0,cursor:"crosshair"}}
+      <canvas ref={wheelRef} width={200} height={200} style={{position:"absolute",inset:0,cursor:"crosshair",touchAction:"none"}}
         onMouseDown={e=>{wheelDrag.current=true;onWheelClick(e)}}
         onMouseMove={e=>{if(wheelDrag.current)onWheelClick(e)}}
         onMouseUp={()=>{wheelDrag.current=false}}
-        onMouseLeave={()=>{wheelDrag.current=false}}/>
-      <canvas ref={svRef} width={100} height={100} style={{position:"absolute",top:50,left:50,width:100,height:100,cursor:"crosshair",borderRadius:2}}
+        onMouseLeave={()=>{wheelDrag.current=false}}
+        onTouchStart={e=>{e.preventDefault();wheelDrag.current=true;onWheelClick(e)}}
+        onTouchMove={e=>{e.preventDefault();if(wheelDrag.current)onWheelClick(e)}}
+        onTouchEnd={()=>{wheelDrag.current=false}}/>
+      <canvas ref={svRef} width={100} height={100} style={{position:"absolute",top:50,left:50,width:100,height:100,cursor:"crosshair",borderRadius:2,touchAction:"none"}}
         onMouseDown={e=>{svDrag.current=true;onSVClick(e)}}
         onMouseMove={e=>{if(svDrag.current)onSVClick(e)}}
         onMouseUp={()=>{svDrag.current=false}}
-        onMouseLeave={()=>{svDrag.current=false}}/>
+        onMouseLeave={()=>{svDrag.current=false}}
+        onTouchStart={e=>{e.preventDefault();svDrag.current=true;onSVClick(e)}}
+        onTouchMove={e=>{e.preventDefault();if(svDrag.current)onSVClick(e)}}
+        onTouchEnd={()=>{svDrag.current=false}}/>
     </div>
     <div style={{display:"flex",alignItems:"center",gap:8,width:"100%"}}>
       <div style={{width:32,height:32,borderRadius:6,background:hexVal,border:"2px solid rgba(255,255,255,.2)",flexShrink:0}}/>
@@ -697,7 +705,7 @@ const editSelPath=useRef(null); // cached Path2D for selection clipping
 const editToolNames={brush:"브러시",eraser:"지우개",eyedropper:"스포이드",blur:"블러",wand:"선택"};
 const[editShortcuts,sEditShortcuts]=useState(()=>{try{return JSON.parse(localStorage.getItem("nai_edit_shortcuts"))||{}}catch{return{}}});
 const[shortcutModal,sShortcutModal]=useState(null); // tool id being configured
-const longPressTimer=useRef(null);
+const shortcutModalPos=useRef({x:0,y:0});
 const[editLayers,sEditLayers]=useState([]); // [{id,name,visible}] - metadata only
 const[editActiveLayer,sEditActiveLayer]=useState(null);
 const editCanvasRef=useRef(null);
@@ -2153,8 +2161,8 @@ return(
 {editMode==="edit"&&showCW&&<React.Fragment><div style={{position:"fixed",inset:0,zIndex:10000}} onClick={()=>sShowCW(false)}/><ColorWheel color={editColor} onChange={c=>sEditColor(c)} onClose={()=>sShowCW(false)}/></React.Fragment>}
 {/* Shortcut capture modal */}
 {shortcutModal&&<React.Fragment>
-<div style={{position:"fixed",inset:0,zIndex:10001,background:"rgba(0,0,0,.6)"}} onClick={()=>sShortcutModal(null)}/>
-<div style={{position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",zIndex:10002,background:"#1e1a32",border:"1px solid rgba(90,180,255,.3)",borderRadius:12,padding:"20px 28px",textAlign:"center",minWidth:220,boxShadow:"0 8px 30px rgba(0,0,0,.6)"}}
+<div style={{position:"fixed",inset:0,zIndex:10001,background:"rgba(0,0,0,.4)"}} onClick={()=>sShortcutModal(null)}/>
+<div style={{position:"fixed",left:shortcutModalPos.current.x,top:shortcutModalPos.current.y,zIndex:10002,background:"#1e1a32",border:"1px solid rgba(90,180,255,.3)",borderRadius:10,padding:"16px 22px",textAlign:"center",minWidth:180,boxShadow:"0 8px 30px rgba(0,0,0,.6)"}}
   tabIndex={0} autoFocus
   ref={el=>{if(el)el.focus()}}
   onKeyDown={e=>{
@@ -2165,7 +2173,6 @@ return(
       sShortcutModal(null);tw("단축키 해제됨");return;
     }
     if(e.key.length===1){
-      // Check if already used by another tool
       const key=e.key.toLowerCase();
       const conflict=Object.entries(editShortcuts).find(([t,k])=>k.toLowerCase()===key&&t!==shortcutModal);
       if(conflict){tw("⚠ '"+key.toUpperCase()+"' → "+editToolNames[conflict[0]]+"에서 사용 중");return}
@@ -2173,9 +2180,9 @@ return(
       sShortcutModal(null);tw("단축키 설정: "+key.toUpperCase());
     }
   }}>
-<div style={{fontSize:14,fontWeight:700,color:"#5cb8ff",marginBottom:8}}>{editToolNames[shortcutModal]} 단축키</div>
-<div style={{fontSize:22,marginBottom:10}}>{editShortcuts[shortcutModal]?editShortcuts[shortcutModal].toUpperCase():"—"}</div>
-<div style={{fontSize:11,color:"#aaa",marginBottom:6}}>키를 누르세요</div>
+<div style={{fontSize:13,fontWeight:700,color:"#5cb8ff",marginBottom:6}}>{editToolNames[shortcutModal]} 단축키</div>
+<div style={{fontSize:22,marginBottom:8,color:"#fff"}}>{editShortcuts[shortcutModal]?editShortcuts[shortcutModal].toUpperCase():"—"}</div>
+<div style={{fontSize:10,color:"#aaa",marginBottom:4}}>키를 누르세요</div>
 <div style={{fontSize:9,color:"#666"}}>ESC 취소 · DEL 해제</div>
 </div>
 </React.Fragment>}
@@ -2183,10 +2190,8 @@ return(
 {editMode==="edit"&&<div style={{width:62,background:"rgba(15,12,30,.95)",borderRight:"1px solid rgba(90,180,255,.1)",display:"flex",flexDirection:"column",alignItems:"center",gap:2,padding:"6px 2px",flexShrink:0,overflowY:"auto"}}>
 {[["brush","🖌"],["eraser","🧹"],["eyedropper","💧"],["blur","🌫"],["wand","🪄"]].map(([t,icon])=>
 <button key={t} onClick={()=>sEditTool(t)}
-  onContextMenu={e=>{e.preventDefault();sShortcutModal(t)}}
-  onTouchStart={e=>{longPressTimer.current=setTimeout(()=>{e.preventDefault();sShortcutModal(t)},500)}}
-  onTouchEnd={()=>{clearTimeout(longPressTimer.current)}}
-  onTouchMove={()=>{clearTimeout(longPressTimer.current)}}
+  onDoubleClick={e=>{const r=e.currentTarget.getBoundingClientRect();shortcutModalPos.current={x:r.right+8,y:r.top};sShortcutModal(t)}}
+  onContextMenu={e=>{e.preventDefault();const r=e.currentTarget.getBoundingClientRect();shortcutModalPos.current={x:r.right+8,y:r.top};sShortcutModal(t)}}
   style={{...Z.hB,fontSize:13,width:54,height:54,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:1,padding:2,position:"relative",
   background:editTool===t?"rgba(90,180,255,.25)":"transparent",
   borderColor:editTool===t?"rgba(90,180,255,.4)":"rgba(255,255,255,.1)",
