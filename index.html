@@ -108,6 +108,8 @@ async function imF(){if(FS){try{const[h]=await window.showOpenFilePicker({id:PK,
 /* ═══ NAI API ═══ */
 const NAI_IMG="https://image.novelai.net/ai/generate-image";
 const NAI_SUB="https://api.novelai.net/user/subscription";
+const UC_PRESET_0="nsfw, lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page";
+const QUALITY_SUFFIX=", very aesthetic, masterpiece, no text";
 
 async function fetchAnlas(token){
   token=(token||"").trim();
@@ -139,8 +141,7 @@ async function generateImage(token,se,basePos,baseNeg,charPrompts,vibeRefs,i2iOp
   const seed=se.seed?parseInt(se.seed):Math.floor(Math.random()*4294967295);
   const isV4=se.model.includes("-4");
   const isV45=se.model.includes("-4-5");
-  const negFB="blurry, lowres, error, film grain, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration";
-  const negText=baseNeg||negFB;
+  const negText=UC_PRESET_0+(baseNeg?", "+baseNeg:"");
   charPrompts=charPrompts||[];
 
   let params;
@@ -228,8 +229,13 @@ async function generateImage(token,se,basePos,baseNeg,charPrompts,vibeRefs,i2iOp
     if(params.v4_negative_prompt)params.v4_negative_prompt.legacy_uc=false;
   }
 
-  const inputField=params._inputOverride||basePos;
+  let inputField=params._inputOverride||basePos;
   delete params._inputOverride;
+  // qualityToggle: append quality suffix to input
+  if(params.qualityToggle&&isV4){
+    inputField+=QUALITY_SUFFIX;
+    if(params.v4_prompt)params.v4_prompt.caption.base_caption+=QUALITY_SUFFIX;
+  }
   const action=i2iOpts?"img2img":"generate";
   const payload={input:inputField,model:se.model,action:action,parameters:params};
 
@@ -252,15 +258,36 @@ async function generateImage(token,se,basePos,baseNeg,charPrompts,vibeRefs,i2iOp
   catch(e){if(blob.type?.startsWith("image/"))return URL.createObjectURL(blob);throw new Error("응답 파싱 실패")}
 }
 
-async function doInpaint(token,se,basePos,baseNeg,imgB64,maskB64,strength){
+async function doInpaint(token,se,basePos,baseNeg,charPrompts,imgB64,maskB64,strength){
   token=token.trim();
   const seed=se.seed?parseInt(se.seed):Math.floor(Math.random()*4294967295);
   // NAI convention: append -inpainting to model name
   let inpaintModel=se.model+"-inpainting";
   // V3 fallback
   if(se.model.includes("nai-diffusion-3"))inpaintModel="nai-diffusion-3-inpainting";
-  const negFB="blurry, lowres, error, worst quality, bad quality, jpeg artifacts";
-  const negText=baseNeg||negFB;
+  const negText=UC_PRESET_0+(baseNeg?", "+baseNeg:"");
+  charPrompts=charPrompts||[];
+  const isV4=se.model.includes("-4");
+  const isV45=se.model.includes("-4-5");
+
+  // Build character prompt structures (same logic as generateImage)
+  let effectiveBasePos=basePos;
+  let charCaptions=[];
+  let charNegCaptions=[];
+  let charPromptsLegacy=[];
+  let negAll=negText;
+
+  if(isV4&&charPrompts.length>0){
+    if(isV45){
+      effectiveBasePos=[basePos,...charPrompts.map(c=>c.pos)].filter(Boolean).join(" | ");
+      negAll=[negText,...charPrompts.map(c=>c.neg).filter(Boolean)].join(", ");
+    }else{
+      charCaptions=charPrompts.map(cp=>({char_caption:cp.pos||"",centers:[]}));
+      charNegCaptions=charPrompts.map(cp=>({char_caption:cp.neg||"",centers:[]}));
+      charPromptsLegacy=charPrompts.map(cp=>({prompt:cp.pos||"",uc:cp.neg||""}));
+    }
+  }
+
   const params={
     params_version:3,
     width:se.width,height:se.height,scale:se.scale,sampler:se.sampler,steps:se.steps,
@@ -274,15 +301,25 @@ async function doInpaint(token,se,basePos,baseNeg,imgB64,maskB64,strength){
     inpaintImg2ImgStrength:1,
     deliberate_euler_ancestral_bug:false,prefer_brownian:true,
     normalize_reference_strength_multiple:true,
-    use_coords:false,characterPrompts:[],
-    v4_prompt:{caption:{base_caption:basePos,char_captions:[]},use_coords:false,use_order:true},
-    v4_negative_prompt:{caption:{base_caption:negText,char_captions:[]},legacy_uc:false},
-    negative_prompt:negText,
+    use_coords:false,characterPrompts:charPromptsLegacy,
+    v4_prompt:{caption:{base_caption:effectiveBasePos,char_captions:charCaptions},use_coords:false,use_order:true},
+    v4_negative_prompt:{caption:{base_caption:negAll,char_captions:charNegCaptions},legacy_uc:false},
+    negative_prompt:negAll,
   };
-  const payload={input:basePos,model:inpaintModel,action:"infill",parameters:params};
+  // qualityToggle: append quality suffix to input
+  let inpaintInput=effectiveBasePos;
+  if(params.qualityToggle&&isV4){
+    inpaintInput+=QUALITY_SUFFIX;
+    params.v4_prompt.caption.base_caption+=QUALITY_SUFFIX;
+  }
+  const payload={input:inpaintInput,model:inpaintModel,action:"infill",parameters:params};
   console.log("=== NAI INPAINT ===");
-  console.log("Model:",inpaintModel,"Action:infill","Strength:",strength);
-  console.log("Prompt:",basePos.slice(0,100));
+  console.log("Model:",inpaintModel,"Action:infill","Strength:",strength,"V4.5:",isV45,"Chars:",charPrompts.length);
+  console.log("[POSITIVE input]:",inpaintInput.slice(0,300));
+  console.log("[POSITIVE v4_prompt.base_caption]:",params.v4_prompt?.caption?.base_caption?.slice(0,300)||"(none)");
+  if(params.v4_prompt?.caption?.char_captions?.length>0)params.v4_prompt.caption.char_captions.forEach((cc,i)=>console.log("[POSITIVE char_caption "+i+"]:",cc.char_caption?.slice(0,150)));
+  console.log("[NEGATIVE]:",params.negative_prompt?.slice(0,200));
+  console.log("[characterPrompts]:",JSON.stringify(params.characterPrompts?.map(c=>({p:c.prompt?.slice(0,50),uc:c.uc?.slice(0,50)}))));
   console.log("Image b64 len:",imgB64.length,"Mask b64 len:",maskB64.length);
   console.log("Payload (no img/mask):",JSON.stringify({...payload,parameters:{...params,image:"[b64]",mask:"[b64]"}}).slice(0,1500));
   const url="https://image.novelai.net/ai/generate-image";
@@ -713,7 +750,7 @@ const doGenerate=async()=>{
       console.log("MaskB64 length:",ipMaskB64.length);
       console.log("Strength:",ipStrength);
       console.log("Model:",se.model+"-inpainting");
-      url=await doInpaint(se.apiToken,se,pBase||pO,nBase||nO,imgB64,ipMaskB64,ipStrength);
+      url=await doInpaint(se.apiToken,se,pBase||pO,nBase||nO,charPrompts,imgB64,ipMaskB64,ipStrength);
     }else if(mode==="img2img"&&baseImg){
       // Convert blob URL to proper PNG base64
       const resp=await fetch(baseImg);const blob=await resp.blob();
