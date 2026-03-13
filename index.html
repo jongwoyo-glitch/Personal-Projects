@@ -2378,39 +2378,39 @@ return(
 </div>
 </React.Fragment>}
 {/* Left Sidebar - Edit Tools + Colors */}
-{editMode==="edit"&&<div style={{width:80,background:"rgba(15,12,30,.95)",borderRight:"1px solid rgba(90,180,255,.1)",display:"flex",flexDirection:"column",alignItems:"center",gap:4,padding:"8px 5px",flexShrink:0,overflowY:"auto"}}>
+{editMode==="edit"&&<div style={{width:130,background:"rgba(15,12,30,.95)",borderRight:"1px solid rgba(90,180,255,.1)",display:"flex",flexDirection:"column",alignItems:"center",gap:6,padding:"12px 8px",flexShrink:0,overflowY:"auto"}}>
 {[["brush","🖌"],["eraser","🧹"],["eyedropper","💧"],["blur","🌫"],["wand","🪄"]].map(([t,icon])=>{
 const active=editTool===t;
 const bg=active?"rgba(90,180,255,.25)":"rgba(255,255,255,.03)";
 const bc=active?"rgba(90,180,255,.4)":"rgba(255,255,255,.08)";
 const fg=active?"#5cb8ff":"#888";
-return <div key={t} style={{borderRadius:8,border:`1px solid ${bc}`,background:bg,overflow:"hidden",width:70,display:"flex",flexDirection:"row"}}>
+return <div key={t} style={{borderRadius:12,border:`1px solid ${bc}`,background:bg,overflow:"hidden",width:116,display:"flex",flexDirection:"row"}}>
 {/* Shortcut area - left */}
 <div onClick={e=>{const r=e.currentTarget.parentElement.getBoundingClientRect();shortcutModalPos.current={x:r.right+6,y:r.top};sShortcutModal(t)}}
-  style={{display:"flex",alignItems:"center",justifyContent:"center",width:16,flexShrink:0,cursor:"pointer",color:active?"rgba(90,180,255,.6)":"rgba(255,255,255,.2)",fontSize:10,fontWeight:700}}>⋮</div>
+  style={{display:"flex",alignItems:"center",justifyContent:"center",width:26,flexShrink:0,cursor:"pointer",color:active?"rgba(90,180,255,.6)":"rgba(255,255,255,.2)",fontSize:16,fontWeight:700}}>⋮</div>
 {/* Divider */}
 <div style={{width:1,alignSelf:"stretch",background:active?"rgba(90,180,255,.25)":"rgba(255,255,255,.06)"}}/>
 {/* Tool area - right */}
-<div onClick={()=>sEditTool(t)} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:2,padding:"7px 2px",cursor:"pointer",position:"relative",minHeight:48}}>
-  <span style={{fontSize:20,lineHeight:1,color:fg}}>{icon}</span>
-  <span style={{fontSize:9,lineHeight:1,color:fg,opacity:.8}}>{editToolNames[t]}</span>
-  {editShortcuts[t]&&<span style={{position:"absolute",top:2,right:2,fontSize:8,background:"rgba(90,180,255,.4)",color:"#cde",borderRadius:2,padding:"0 3px",lineHeight:"13px",fontFamily:"monospace",fontWeight:600}}>{editShortcuts[t].toUpperCase()}</span>}
+<div onClick={()=>sEditTool(t)} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:3,padding:"12px 4px",cursor:"pointer",position:"relative",minHeight:78}}>
+  <span style={{fontSize:34,lineHeight:1,color:fg}}>{icon}</span>
+  <span style={{fontSize:14,lineHeight:1,color:fg,opacity:.8}}>{editToolNames[t]}</span>
+  {editShortcuts[t]&&<span style={{position:"absolute",top:4,right:4,fontSize:12,background:"rgba(90,180,255,.4)",color:"#cde",borderRadius:3,padding:"0 5px",lineHeight:"18px",fontFamily:"monospace",fontWeight:600}}>{editShortcuts[t].toUpperCase()}</span>}
 </div>
 </div>})}
-<div style={{width:44,height:1,background:"rgba(255,255,255,.08)",margin:"3px 0"}}/>
-<div style={{display:"flex",gap:4,alignItems:"center",justifyContent:"center"}}>
-<div onClick={()=>sShowCW(true)} style={{width:32,height:32,borderRadius:6,background:editTransparent?"transparent":editColor,cursor:"pointer",border:editTransparent?"2px solid rgba(255,255,255,.15)":"2px solid rgba(255,255,255,.3)",flexShrink:0,
-  backgroundImage:editTransparent?"repeating-conic-gradient(#444 0% 25%, #666 0% 50%)":"none",backgroundSize:"8px 8px"}} title="색상환 열기"/>
-<div onClick={()=>{sEditTransparent(true);sEditTool("brush")}} style={{width:32,height:32,borderRadius:6,cursor:"pointer",flexShrink:0,
+<div style={{width:72,height:1,background:"rgba(255,255,255,.08)",margin:"5px 0"}}/>
+<div style={{display:"flex",gap:6,alignItems:"center",justifyContent:"center"}}>
+<div onClick={()=>sShowCW(true)} style={{width:52,height:52,borderRadius:10,background:editTransparent?"transparent":editColor,cursor:"pointer",border:editTransparent?"2px solid rgba(255,255,255,.15)":"2px solid rgba(255,255,255,.3)",flexShrink:0,
+  backgroundImage:editTransparent?"repeating-conic-gradient(#444 0% 25%, #666 0% 50%)":"none",backgroundSize:"10px 10px"}} title="색상환 열기"/>
+<div onClick={()=>{sEditTransparent(true);sEditTool("brush")}} style={{width:52,height:52,borderRadius:10,cursor:"pointer",flexShrink:0,
   border:editTransparent?"2px solid #f88":"2px solid rgba(255,255,255,.15)",
-  backgroundImage:"repeating-conic-gradient(#444 0% 25%, #666 0% 50%)",backgroundSize:"8px 8px",
+  backgroundImage:"repeating-conic-gradient(#444 0% 25%, #666 0% 50%)",backgroundSize:"10px 10px",
   display:"flex",alignItems:"center",justifyContent:"center"}}>
-<span style={{fontSize:9,color:"#f88",fontWeight:700,textShadow:"0 1px 2px #000"}}>투명</span>
+<span style={{fontSize:14,color:"#f88",fontWeight:700,textShadow:"0 1px 2px #000"}}>투명</span>
 </div>
 </div>
-<div style={{display:"flex",flexWrap:"wrap",gap:3,justifyContent:"center",padding:"0 3px"}}>
+<div style={{display:"flex",flexWrap:"wrap",gap:4,justifyContent:"center",padding:"0 5px"}}>
 {["#ff0000","#ff8800","#ffee00","#00cc44","#0088ff","#aa44ff","#ffffff","#000000","#c97850","#ffccaa"].map(c=>
-<div key={c} onClick={()=>{sEditColor(c);sEditTransparent(false);sEditTool("brush")}} style={{width:28,height:28,borderRadius:4,background:c,cursor:"pointer",border:editColor===c&&!editTransparent?"2px solid #fff":"1px solid rgba(255,255,255,.15)",flexShrink:0}}/>)}
+<div key={c} onClick={()=>{sEditColor(c);sEditTransparent(false);sEditTool("brush")}} style={{width:47,height:47,borderRadius:6,background:c,cursor:"pointer",border:editColor===c&&!editTransparent?"3px solid #fff":"1px solid rgba(255,255,255,.15)",flexShrink:0}}/>)}
 </div>
 </div>}
 {/* Left Sidebar - BG Remove Tools */}
@@ -2430,32 +2430,32 @@ return <div key={t} style={{borderRadius:8,border:`1px solid ${bc}`,background:b
   color:bgReverse?"#fa5":"#888"}}>{bgReverse?"🛡":"🎯"}</button>
 </div>}
 {/* Layers panel - between tools and canvas */}
-{editMode==="edit"&&<div style={{width:180,borderRight:"1px solid rgba(90,180,255,.1)",background:"rgba(10,8,20,.6)",display:"flex",flexDirection:"column",flexShrink:0}}>
-<div style={{padding:"8px 10px",borderBottom:"1px solid rgba(90,180,255,.08)",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-<span style={{fontSize:13,fontWeight:700,color:"#5cb8ff"}}>레이어</span>
-<button onClick={()=>addEditLayer()} style={{...Z.pB,width:26,height:26,fontSize:13}}>+</button>
+{editMode==="edit"&&<div style={{width:234,borderRight:"1px solid rgba(90,180,255,.1)",background:"rgba(10,8,20,.6)",display:"flex",flexDirection:"column",flexShrink:0}}>
+<div style={{padding:"10px 13px",borderBottom:"1px solid rgba(90,180,255,.08)",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+<span style={{fontSize:17,fontWeight:700,color:"#5cb8ff"}}>레이어</span>
+<button onClick={()=>addEditLayer()} style={{...Z.pB,width:34,height:34,fontSize:17}}>+</button>
 </div>
-<div className="scroll-y" style={{flex:1,padding:6}}>
+<div className="scroll-y" style={{flex:1,padding:8}}>
 {[...editLayers].reverse().map((l,ri)=>{
-const idx=editLayers.length-1-ri; // actual index in editLayers
+const idx=editLayers.length-1-ri;
 const isSrc=l.type==="source";
 const isActive=l.id===editActiveLayer;
 return(
-<div key={l.id} style={{display:"flex",alignItems:"center",gap:4,padding:"5px 6px",marginBottom:3,borderRadius:6,cursor:"pointer",
+<div key={l.id} style={{display:"flex",alignItems:"center",gap:5,padding:"7px 8px",marginBottom:4,borderRadius:8,cursor:"pointer",
   background:isActive?"rgba(90,180,255,.15)":isSrc?"rgba(255,180,60,.06)":"transparent",
   border:isActive?"1px solid rgba(90,180,255,.3)":isSrc?"1px solid rgba(255,180,60,.12)":"1px solid transparent"}}
   onClick={()=>sEditActiveLayer(l.id)}>
 {/* Visibility */}
-<div onClick={e=>{e.stopPropagation();sEditLayers(p=>p.map(x=>x.id===l.id?{...x,visible:!x.visible}:x))}} style={{fontSize:12,cursor:"pointer",opacity:l.visible?1:.3,flexShrink:0}}>{l.visible?"👁":"👁"}</div>
+<div onClick={e=>{e.stopPropagation();sEditLayers(p=>p.map(x=>x.id===l.id?{...x,visible:!x.visible}:x))}} style={{fontSize:16,cursor:"pointer",opacity:l.visible?1:.3,flexShrink:0}}>{l.visible?"👁":"👁"}</div>
 {/* Name */}
-<span style={{fontSize:11,color:isSrc?"#fa5":isActive?"#5cb8ff":"#888",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontWeight:isSrc?600:400}}>{l.name}</span>
+<span style={{fontSize:14,color:isSrc?"#fa5":isActive?"#5cb8ff":"#888",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontWeight:isSrc?600:400}}>{l.name}</span>
 {/* Reorder buttons */}
 <div style={{display:"flex",flexDirection:"column",gap:0,flexShrink:0}} onClick={e=>e.stopPropagation()}>
-{idx<editLayers.length-1&&<button onClick={()=>sEditLayers(p=>{const a=[...p];[a[idx],a[idx+1]]=[a[idx+1],a[idx]];return a})} style={{background:"none",border:"none",color:"#666",fontSize:8,cursor:"pointer",padding:"0 2px",lineHeight:1}}>▲</button>}
-{idx>0&&<button onClick={()=>sEditLayers(p=>{const a=[...p];[a[idx],a[idx-1]]=[a[idx-1],a[idx]];return a})} style={{background:"none",border:"none",color:"#666",fontSize:8,cursor:"pointer",padding:"0 2px",lineHeight:1}}>▼</button>}
+{idx<editLayers.length-1&&<button onClick={()=>sEditLayers(p=>{const a=[...p];[a[idx],a[idx+1]]=[a[idx+1],a[idx]];return a})} style={{background:"none",border:"none",color:"#666",fontSize:10,cursor:"pointer",padding:"0 3px",lineHeight:1}}>▲</button>}
+{idx>0&&<button onClick={()=>sEditLayers(p=>{const a=[...p];[a[idx],a[idx-1]]=[a[idx-1],a[idx]];return a})} style={{background:"none",border:"none",color:"#666",fontSize:10,cursor:"pointer",padding:"0 3px",lineHeight:1}}>▼</button>}
 </div>
-{/* Delete (paint layers only, min 1 paint layer) */}
-{!isSrc&&editLayers.filter(x=>x.type!=="source").length>1&&<button onClick={e=>{e.stopPropagation();const lid=l.id;delete editLayerCanvases.current[lid];sEditLayers(p=>p.filter(x=>x.id!==lid));if(editActiveLayer===lid){const next=editLayers.find(x=>x.id!==lid&&x.type!=="source");if(next)sEditActiveLayer(next.id)}}} style={{background:"none",border:"none",color:"#f55",fontSize:10,cursor:"pointer",padding:0,flexShrink:0}}>✕</button>}
+{/* Delete */}
+{!isSrc&&editLayers.filter(x=>x.type!=="source").length>1&&<button onClick={e=>{e.stopPropagation();const lid=l.id;delete editLayerCanvases.current[lid];sEditLayers(p=>p.filter(x=>x.id!==lid));if(editActiveLayer===lid){const next=editLayers.find(x=>x.id!==lid&&x.type!=="source");if(next)sEditActiveLayer(next.id)}}} style={{background:"none",border:"none",color:"#f55",fontSize:13,cursor:"pointer",padding:0,flexShrink:0}}>✕</button>}
 </div>)})}
 </div>
 </div>}
