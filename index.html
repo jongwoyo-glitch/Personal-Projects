@@ -589,7 +589,7 @@ useEffect(()=>{
 const[lightbox,sLB]=useState(false); // "gen" | "post"
 const[ipEdit,sIPE]=useState(false); // inpaint editor open
 const[ipStrength,sIPS]=useState(0.7);
-const[ipBrush,sIPB]=useState(40);
+const[ipBrush,sIPB]=useState(64);
 const[ipErase,sIPEr]=useState(false);
 const[ipMaskUrl,sIPMaskUrl]=useState(null); // visual overlay for preview
 const[ipMaskB64,sIPMaskB64]=useState(null); // processed B&W mask base64 for API
@@ -789,21 +789,21 @@ const ipSaveSnap=()=>{
   ipHistoryRef.current.push(cv.getContext("2d").getImageData(0,0,cv.width,cv.height));
   if(ipHistoryRef.current.length>30)ipHistoryRef.current.shift();
 };
-// Two-rect stamp: outer=dark border, inner=lighter fill. Border stays INSIDE brush area.
-const BORDER_W=2;
-const ipStamp=(ctx,x,y,s,erase)=>{
+// NAI-style grid-snapped block brush
+const IP_GRID=8; // pixel grid size — mask paints in 8px blocks
+const ipStampGrid=(ctx,x,y,brushSize,erase)=>{
+  const g=IP_GRID;
+  const half=Math.floor(brushSize/2);
+  // Snap brush area to grid
+  const gx0=Math.floor((Math.round(x)-half)/g)*g;
+  const gy0=Math.floor((Math.round(y)-half)/g)*g;
+  const gx1=Math.ceil((Math.round(x)+half)/g)*g;
+  const gy1=Math.ceil((Math.round(y)+half)/g)*g;
   ctx.globalCompositeOperation=erase?"destination-out":"source-over";
-  if(erase){
-    ctx.fillStyle="rgba(0,0,0,1)";
-    ctx.fillRect(Math.round(x-s/2),Math.round(y-s/2),s,s);
-  }else{
-    // Outer rect = darker border color
-    ctx.fillStyle="rgba(50,70,200,1)";
-    ctx.fillRect(Math.round(x-s/2),Math.round(y-s/2),s,s);
-    // Inner rect = lighter fill color (inset by BORDER_W)
-    if(s>BORDER_W*2){
-      ctx.fillStyle="rgba(100,140,255,1)";
-      ctx.fillRect(Math.round(x-s/2)+BORDER_W,Math.round(y-s/2)+BORDER_W,s-BORDER_W*2,s-BORDER_W*2);
+  ctx.fillStyle=erase?"rgba(0,0,0,1)":"rgba(80,110,255,1)";
+  for(let by=gy0;by<gy1;by+=g){
+    for(let bx=gx0;bx<gx1;bx+=g){
+      ctx.fillRect(bx,by,g,g);
     }
   }
 };
@@ -813,27 +813,25 @@ const ipStartDraw=(e)=>{
   const cv=ipCanvasRef.current;if(!cv)return;
   const ctx=cv.getContext("2d");
   ctx.imageSmoothingEnabled=false;
-  ipStamp(ctx,p.x,p.y,ipBrush,ipErase);
+  ipStampGrid(ctx,p.x,p.y,ipBrush,ipErase);
 };
 const ipDraw=(e)=>{
   e.preventDefault();if(!ipDrawing.current)return;
   const cv=ipCanvasRef.current;if(!cv)return;
   const ctx=cv.getContext("2d");const p=getIpXY(e);
   ctx.imageSmoothingEnabled=false;
-  const s=ipBrush;const er=ipErase;
-  // Bresenham interpolation with two-rect stamps
+  // Bresenham interpolation with grid stamps
   if(ipLastPos.current){
     const x0=Math.round(ipLastPos.current.x),y0=Math.round(ipLastPos.current.y);
     const x1=Math.round(p.x),y1=Math.round(p.y);
+    const step=IP_GRID;
     const dx=Math.abs(x1-x0),dy=Math.abs(y1-y0);
-    const sx=x0<x1?1:-1,sy=y0<y1?1:-1;
-    let err=dx-dy,cx=x0,cy=y0;
-    while(true){
-      ipStamp(ctx,cx,cy,s,er);
-      if(cx===x1&&cy===y1)break;
-      const e2=2*err;
-      if(e2>-dy){err-=dy;cx+=sx}
-      if(e2<dx){err+=dx;cy+=sy}
+    const dist=Math.max(dx,dy);
+    const steps=Math.max(1,Math.ceil(dist/step));
+    for(let i=0;i<=steps;i++){
+      const t=steps===0?0:i/steps;
+      const cx=x0+(x1-x0)*t,cy=y0+(y1-y0)*t;
+      ipStampGrid(ctx,cx,cy,ipBrush,ipErase);
     }
   }
   ipLastPos.current=p;
@@ -873,20 +871,26 @@ const applyIpMask=()=>{
   const maskB64=getMaskB64();
   if(!maskB64){tw("⚠ 마스크를 그려주세요");return}
   sIPMaskB64(maskB64);
-  // Create visual overlay from canvas (already has dark border + light fill from stamps)
+  // Create visual overlay with border from grid-block mask
   const cv=ipCanvasRef.current;if(cv){
     const w=cv.width,h=cv.height;
     const src=cv.getContext("2d").getImageData(0,0,w,h);
+    const mask=new Uint8Array(w*h);
+    for(let i=0;i<src.data.length;i+=4)mask[i/4]=(src.data[i+2]>128&&src.data[i+3]>128)?1:0;
+    // Border = mask pixels adjacent to non-mask (inward, 2px)
     const vis=document.createElement("canvas");vis.width=w;vis.height=h;
     const vctx=vis.getContext("2d");const vd=vctx.createImageData(w,h);
-    for(let i=0;i<src.data.length;i+=4){
-      if(src.data[i+2]>128&&src.data[i+3]>128){
-        // Border (R<80) vs fill (R>=80)
-        const isBorder=src.data[i]<80;
-        vd.data[i]=80;vd.data[i+1]=110;vd.data[i+2]=255;
-        vd.data[i+3]=isBorder?200:80;
+    for(let y=0;y<h;y++){for(let x=0;x<w;x++){
+      const idx=y*w+x;
+      if(!mask[idx])continue;
+      let isBorder=false;
+      for(let d=1;d<=2&&!isBorder;d++){
+        if(x-d<0||!mask[idx-d]||x+d>=w||!mask[idx+d]||y-d<0||!mask[(y-d)*w+x]||y+d>=h||!mask[(y+d)*w+x])isBorder=true;
       }
-    }
+      const pi=idx*4;
+      vd.data[pi]=80;vd.data[pi+1]=110;vd.data[pi+2]=255;
+      vd.data[pi+3]=isBorder?190:70;
+    }}
     vctx.putImageData(vd,0,0);
     sIPMaskUrl(vis.toDataURL("image/png"));
   }
@@ -1821,7 +1825,7 @@ backgroundImage:"repeating-conic-gradient(#333 0% 25%, #555 0% 50%)",backgroundS
 <span style={{fontSize:13,fontWeight:700,color:"#c8b8ff"}}>🖌 인페인트 마스크</span>
 <div style={{display:"flex",alignItems:"center",gap:4}}>
 <span style={{fontSize:10,color:"#888"}}>브러시</span>
-<input type="range" min={5} max={150} value={ipBrush} onChange={e=>sIPB(+e.target.value)} style={{width:80}}/>
+<input type="range" min={16} max={200} step={8} value={ipBrush} onChange={e=>sIPB(+e.target.value)} style={{width:80}}/>
 <span style={{fontSize:10,color:"#aaa",fontFamily:"monospace",minWidth:24}}>{ipBrush}</span>
 </div>
 <button onClick={()=>sIPEr(p=>!p)} style={{...Z.hB,fontSize:11,padding:"4px 12px",background:ipErase?"rgba(255,60,60,.2)":"rgba(60,120,255,.2)",color:ipErase?"#f66":"#68f",borderColor:ipErase?"rgba(255,60,60,.3)":"rgba(60,120,255,.3)"}}>{ipErase?"🧹 지우개":"🖌 마스크"}</button>
