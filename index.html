@@ -1930,6 +1930,14 @@ const svC=()=>{const nm=cR.current?.value.trim();if(!nm)return;const nt=nR.curre
 if(cm.t==="a"){const id=G();up(p=>({...p,chars:[...p.chars,{id,name:nm,cols:[{id:G(),name:nm+" 기본"}],chks:[],notes:nt}]}))
 }else{const cid=cm.c.id;up(p=>({...p,chars:p.chars.map(c=>c.id===cid?{...c,name:nm,notes:nt}:c)}))}sCm(null)};
 const dC=id=>{if(!confirm("삭제?"))return;up(p=>({...p,chars:p.chars.filter(c=>c.id!==id),activeIds:(p.activeIds||[]).filter(x=>x!==id)}))};
+// Duplicate character (deep clone with new IDs)
+const dupC=id=>{up(p=>{
+  const src=p.chars.find(c=>c.id===id);if(!src)return p;
+  const nc={...JSON.parse(JSON.stringify(src)),id:G(),name:src.name+" (복제)"};
+  nc.cols=nc.cols.map(c=>({...c,id:G()}));
+  nc.chks=nc.chks.map(c=>({...c,id:G()}));
+  return{...p,chars:[...p.chars,nc]};
+});tw("✓ 캐릭터 복제됨")};
 
 /* ── Vibe Transfer (base level) ── */
 // Convert uploaded image file to data URL (keep original format, NAI encode-vibe handles it)
@@ -2092,13 +2100,13 @@ return(
 <div className="scroll-y" style={{flex:1,padding:"0 8px 8px"}}>
 {chars.map(ch=>(
 <div key={ch.id} className={`cc${activeIds.includes(ch.id)?" on":""}`} onClick={()=>toggleChar(ch.id)}>
-<div className="ct"><span>👤</span></div>
 <div style={{flex:1,minWidth:0}}>
 <div style={{fontSize:13,fontWeight:600,color:activeIds.includes(ch.id)?"#ffb080":"#bbb",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ch.name}</div>
 <div style={{fontSize:10,color:"#666"}}>{ch.chks.filter(c=>isChkActive(c)).length}청크</div></div>
 <div style={{display:"flex",flexDirection:"column",gap:3}} onClick={e=>e.stopPropagation()}>
-<button onClick={()=>oEC(ch)} style={{...Z.tB,width:32,height:32,fontSize:12,borderRadius:6}}>✎</button>
-<button onClick={()=>dC(ch.id)} style={{...Z.tB,width:32,height:32,fontSize:12,color:"#f55",borderRadius:6}}>✕</button></div></div>))}
+<button onClick={()=>oEC(ch)} style={{...Z.tB,width:28,height:28,fontSize:11,borderRadius:6}}>✎</button>
+<button onClick={()=>dupC(ch.id)} style={{...Z.tB,width:28,height:28,fontSize:11,borderRadius:6}} title="복제">📋</button>
+<button onClick={()=>dC(ch.id)} style={{...Z.tB,width:28,height:28,fontSize:11,color:"#f55",borderRadius:6}}>✕</button></div></div>))}
 {chars.length===0&&<div style={{fontSize:10,color:"#444",padding:10,textAlign:"center"}}>캐릭터를 추가하세요</div>}</div>
 </div>
 
