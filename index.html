@@ -22,11 +22,11 @@ try{
 </script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-html{height:100%;height:-webkit-fill-available}
+html{height:100%;height:-webkit-fill-available;overscroll-behavior:none}
 body{background:#0d0d18;color:#ddd;font-family:'Noto Sans KR','Segoe UI',sans-serif;overflow:hidden;
   height:100vh;height:100dvh;height:-webkit-fill-available;
   padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
-  -webkit-text-size-adjust:100%;touch-action:manipulation}
+  -webkit-text-size-adjust:100%;touch-action:manipulation;overscroll-behavior:none;position:fixed;width:100%}
 ::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:rgba(120,90,255,.35);border-radius:3px}
 select,input,textarea,button{font-size:14px;-webkit-appearance:none;border-radius:0}
 select option{background:#1a1a30;color:#ddd}
@@ -477,7 +477,7 @@ function ColorWheel({color,onChange,onClose}){
 }
 
 function Mod({open,onClose,title,w,children}){if(!open)return null;return(
-<div style={Z.ov} onClick={onClose}><div style={{...Z.mb,width:w||"min(600px,94vw)",maxHeight:"90vh",overflow:"auto",resize:"both"}} onClick={e=>e.stopPropagation()}>
+<div style={Z.ov} onClick={onClose}><div style={{...Z.mb,width:w||"min(600px,94vw)",maxHeight:"90vh",overflow:"auto",overscrollBehavior:"contain",resize:"both"}} onClick={e=>e.stopPropagation()}>
 <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}><h3 style={{margin:0,fontSize:17,color:"#e0d6ff"}}>{title}</h3><button onClick={onClose} style={{background:"none",border:"none",color:"#666",fontSize:22,cursor:"pointer",minWidth:44,minHeight:44,display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button></div>{children}</div></div>)}
 
 /* ─── ChunkItem ─── */
@@ -530,6 +530,20 @@ function OB({label,color,text,cp,onC}){return(<div style={{flex:1,minWidth:220}}
 /* ═══════ APP ═══════ */
 function App(){
 const[D,sD]=useState(()=>{const d=ll(LS,null);return d?.baseCols?d:DD()});
+
+// iPad Safari: prevent document scroll on Shift+arrow text selection
+useEffect(()=>{
+  const kill=()=>{if(window.scrollY!==0)window.scrollTo(0,0);
+    if(document.documentElement.scrollTop!==0)document.documentElement.scrollTop=0;
+    if(document.body.scrollTop!==0)document.body.scrollTop=0};
+  window.addEventListener("scroll",kill,{passive:false});
+  document.addEventListener("scroll",kill,{passive:false});
+  // Also catch visualViewport offset changes (iOS keyboard)
+  const vv=window.visualViewport;
+  const onVV=()=>{kill()};
+  if(vv)vv.addEventListener("scroll",onVV);
+  return()=>{window.removeEventListener("scroll",kill);document.removeEventListener("scroll",kill);if(vv)vv.removeEventListener("scroll",onVV)};
+},[]);
 const[mo,sMo]=useState(null);
 const[cm,sCm]=useState(null);
 const[so,sSo]=useState(false);
@@ -2097,7 +2111,7 @@ backgroundImage:"repeating-conic-gradient(#333 0% 25%, #555 0% 50%)",backgroundS
 
 const Z={
 ov:{position:"fixed",inset:0,zIndex:999,background:"rgba(0,0,0,.6)",display:"flex",alignItems:"center",justifyContent:"center",backdropFilter:"blur(3px)"},
-mb:{background:"#16162a",border:"1px solid #2a2a4a",borderRadius:12,padding:"24px 28px",maxHeight:"85vh",maxHeight:"85dvh",overflowY:"auto",WebkitOverflowScrolling:"touch"},
+mb:{background:"#16162a",border:"1px solid #2a2a4a",borderRadius:12,padding:"24px 28px",maxHeight:"85vh",maxHeight:"85dvh",overflowY:"auto",WebkitOverflowScrolling:"touch",overscrollBehavior:"contain"},
 hB:{background:"rgba(120,90,255,.15)",border:"1px solid rgba(120,90,255,.3)",borderRadius:6,padding:"6px 14px",color:"#b095ff",fontSize:12,fontWeight:600,cursor:"pointer",minHeight:36},
 aV:{background:"none",border:"none",color:"#666",fontSize:10,cursor:"pointer",padding:"4px 3px",lineHeight:1,minWidth:28,minHeight:24,display:"inline-flex",alignItems:"center",justifyContent:"center"},
 aH:{background:"none",border:"none",color:"#888",fontSize:12,cursor:"pointer",padding:"4px 6px",minWidth:32,minHeight:32,display:"inline-flex",alignItems:"center",justifyContent:"center"},
