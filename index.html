@@ -609,6 +609,7 @@ const[editBrush,sEditBrush]=useState(20);
 const[editColor,sEditColor]=useState("#ff0000");
 const[editTool,sEditTool]=useState("brush"); // brush|eraser|eyedropper|blur
 const[editOpacity,sEditOpacity]=useState(1);
+const[pencilOnly,sPencilOnly]=useState(false); // Apple Pencil only mode
 const[editBlurStr,sEditBlurStr]=useState(4);
 const[editZoom,sEditZoom]=useState(1);
 const[editPan,sEditPan]=useState({x:0,y:0});
@@ -1052,6 +1053,9 @@ const editStartDraw=(e)=>{
     return;
   }
   editSaveSnap();editDrawing.current=true;editDoDraw(e);
+  // Attach window-level listeners so drawing continues outside canvas
+  window.addEventListener("mousemove",editDoDraw);
+  window.addEventListener("mouseup",editStopDraw);
 };
 
 const editDoDraw=(e)=>{
@@ -1109,6 +1113,9 @@ const editDoDraw=(e)=>{
 };
 
 const editStopDraw=()=>{
+  // Remove window-level listeners
+  window.removeEventListener("mousemove",editDoDraw);
+  window.removeEventListener("mouseup",editStopDraw);
   // On stroke end: composite stroke canvas onto active layer with opacity
   if(editDrawing.current&&editStrokeCanvas.current&&editTool!=="eraser"&&editTool!=="blur"){
     const acv=getActiveCanvas();
@@ -1139,7 +1146,7 @@ const editUndo=()=>{
   compositeEdit();
 };
 
-// Pinch zoom + pan
+// Pinch zoom + pan + two-finger tap undo
 const editTouchStart=(e)=>{
   if(e.touches.length===2){
     e.preventDefault();
@@ -1147,9 +1154,11 @@ const editTouchStart=(e)=>{
     const dist=Math.hypot(t[0].clientX-t[1].clientX,t[0].clientY-t[1].clientY);
     const cx=(t[0].clientX+t[1].clientX)/2;
     const cy=(t[0].clientY+t[1].clientY)/2;
-    editPinch.current={dist,cx,cy,zoom:editZoom,pan:{...editPan}};
+    editPinch.current={dist,cx,cy,zoom:editZoom,pan:{...editPan},moved:false,time:Date.now()};
     return;
   }
+  // Pencil-only mode: ignore finger touches
+  if(pencilOnly&&e.touches[0]&&e.touches[0].touchType!=="stylus"){return}
   editStartDraw(e);
 };
 const editTouchMove=(e)=>{
@@ -1158,6 +1167,10 @@ const editTouchMove=(e)=>{
     const t=e.touches;
     const dist=Math.hypot(t[0].clientX-t[1].clientX,t[0].clientY-t[1].clientY);
     const scale=dist/editPinch.current.dist;
+    // Mark as moved if pinch/pan exceeds threshold
+    if(Math.abs(scale-1)>0.05||Math.abs((t[0].clientX+t[1].clientX)/2-editPinch.current.cx)>10||Math.abs((t[0].clientY+t[1].clientY)/2-editPinch.current.cy)>10){
+      editPinch.current.moved=true;
+    }
     const newZoom=Math.max(0.25,Math.min(5,editPinch.current.zoom*scale));
     const cx=(t[0].clientX+t[1].clientX)/2;
     const cy=(t[0].clientY+t[1].clientY)/2;
@@ -1165,10 +1178,22 @@ const editTouchMove=(e)=>{
     sEditPan({x:editPinch.current.pan.x+(cx-editPinch.current.cx),y:editPinch.current.pan.y+(cy-editPinch.current.cy)});
     return;
   }
+  if(pencilOnly&&e.touches[0]&&e.touches[0].touchType!=="stylus"){return}
   editDoDraw(e);
 };
 const editTouchEnd=(e)=>{
-  if(editPinch.current&&e.touches.length<2)editPinch.current=null;
+  if(editPinch.current&&e.touches.length<2){
+    // Two-finger tap (no move, quick) → undo
+    if(!editPinch.current.moved&&Date.now()-editPinch.current.time<400){
+      const h=editHistoryRef.current;if(h.length>0){
+        const snap=h.pop();
+        const lcv=editLayerCanvases.current[snap.layerId];
+        if(lcv)lcv.getContext("2d").putImageData(snap.data,0,0);
+        compositeEdit();
+      }
+    }
+    editPinch.current=null;
+  }
   editStopDraw();
 };
 
@@ -1780,6 +1805,10 @@ return(
 <button onClick={editClear} style={{...Z.hB,fontSize:12,padding:"6px 12px",minHeight:44,color:"#f66"}}>✕ 초기화</button>
 <span style={{fontSize:9,color:"#555"}}>{Math.round(editZoom*100)}%</span>
 <button onClick={()=>{sEditZoom(1);sEditPan({x:0,y:0})}} style={{...Z.hB,fontSize:10,padding:"4px 8px",minHeight:44}}>1:1</button>
+<button onClick={()=>sPencilOnly(p=>!p)} style={{...Z.hB,fontSize:11,padding:"6px 10px",minHeight:44,
+  background:pencilOnly?"rgba(255,180,60,.2)":"transparent",
+  borderColor:pencilOnly?"rgba(255,180,60,.4)":"rgba(255,255,255,.1)",
+  color:pencilOnly?"#fa5":"#666"}} title="Apple Pencil 전용 모드">{pencilOnly?"✏️ 펜슬":"👆 터치"}</button>
 <div style={{flex:1}}/>
 <button onClick={editApply} className="gen-btn" style={{fontSize:12,padding:"6px 14px",minHeight:44,background:"linear-gradient(135deg,#3388ff,#5cb8ff)"}}>✅ 적용 → Base</button>
 <button onClick={()=>{sEditMode(false);sEditSrc(null)}} style={{...Z.hB,fontSize:14,padding:"6px 12px",minHeight:44,color:"#f66"}}>✕</button>
@@ -1837,7 +1866,7 @@ backgroundImage:"repeating-conic-gradient(#333 0% 25%, #555 0% 50%)",backgroundS
 <img ref={editImgRef} src={editImg} style={{width:"100%",height:"100%",objectFit:"contain",display:"block",userSelect:"none",WebkitUserSelect:"none"}} draggable={false}/>
 <canvas ref={editCanvasRef} style={{position:"absolute",inset:0,width:"100%",height:"100%",
   cursor:editTool==="eyedropper"?"crosshair":editTool==="blur"?"cell":editTool==="bgremove"?"crosshair":"default",touchAction:"none"}}
-  onMouseDown={editStartDraw} onMouseMove={editDoDraw} onMouseUp={editStopDraw} onMouseLeave={editStopDraw}
+  onMouseDown={editStartDraw}
   onContextMenu={e=>e.preventDefault()}
   onTouchStart={editTouchStart} onTouchMove={editTouchMove} onTouchEnd={editTouchEnd}/>
 {/* Brush resize preview circle */}
