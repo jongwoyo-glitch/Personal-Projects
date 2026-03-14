@@ -2432,11 +2432,18 @@ return(
 
 {/* Base Image section */}
 {hasBase&&<div style={{flexShrink:0}}>
-<div style={{padding:"8px 10px",borderBottom:"1px solid rgba(120,90,255,.1)",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-<span style={{fontSize:11,fontWeight:700,color:"#b095ff"}}>🖼 Base Image</span>
+<div style={{padding:"8px 10px",borderBottom:"1px solid rgba(120,90,255,.1)",display:"flex",alignItems:"center",gap:6}}>
+<span style={{fontSize:11,fontWeight:700,color:"#b095ff",flexShrink:0}}>🖼 Base</span>
+<div style={{display:"flex",borderRadius:5,overflow:"hidden",border:"1px solid rgba(255,255,255,.1)",flexShrink:0}}>
+<button onClick={()=>{sMode("img2img");sIPMaskUrl(null);sIPMaskB64(null)}} style={{fontSize:9,fontWeight:600,padding:"3px 8px",border:"none",cursor:"pointer",
+  background:mode==="img2img"?"rgba(120,90,255,.25)":"transparent",color:mode==="img2img"?"#b095ff":"#666"}}>img2img</button>
+<button onClick={()=>{sMode("inpaint");if(!ipMaskUrl)sIPE(true)}} style={{fontSize:9,fontWeight:600,padding:"3px 8px",border:"none",borderLeft:"1px solid rgba(255,255,255,.08)",cursor:"pointer",
+  background:mode==="inpaint"?"rgba(255,140,60,.25)":"transparent",color:mode==="inpaint"?"#fa5":"#666"}}>인페인트</button>
+</div>
+<div style={{flex:1}}/>
 <div style={{display:"flex",gap:4}}>
 <button onClick={uploadBaseImg} style={{...Z.tB,width:22,height:22,fontSize:10,color:"#b095ff"}} title="다른 이미지 로드">📁</button>
-<button onClick={()=>{sMode("txt2img");sBaseImg(null);tw("txt2img 모드")}} style={{...Z.tB,width:22,height:22,fontSize:10,color:"#f55"}}>✕</button>
+<button onClick={()=>{sMode("txt2img");sBaseImg(null);sIPMaskUrl(null);sIPMaskB64(null);tw("txt2img 모드")}} style={{...Z.tB,width:22,height:22,fontSize:10,color:"#f55"}}>✕</button>
 </div></div>
 <div style={{display:"flex",alignItems:"center",justifyContent:"center",padding:6}}>
 <div style={{aspectRatio:String(ratio),maxWidth:"100%",maxHeight:200,position:"relative",flexShrink:0}}>
