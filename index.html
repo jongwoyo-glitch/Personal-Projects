@@ -70,6 +70,7 @@ select option{background:#1a1a30;color:#ddd}
 @keyframes tok-pulse{0%,100%{opacity:1}50%{opacity:.6}}
 .tok-label{font-size:9px;font-family:'JetBrains Mono',monospace;font-weight:600;white-space:nowrap}
 .t5-badge{font-size:8px;padding:1px 4px;border-radius:3px;font-weight:600;font-family:'JetBrains Mono',monospace;letter-spacing:.3px;vertical-align:middle}
+.base-drop-item:hover{background:rgba(120,90,255,.12)!important}
 .gen-loadbar{position:fixed;top:0;left:0;right:0;height:3px;z-index:9999;overflow:hidden;background:rgba(120,90,255,.1)}
 .gen-loadbar::after{content:'';position:absolute;top:0;height:100%;background:linear-gradient(90deg,#785aff,#ff6b9d);animation:loadbar 1.5s ease-in-out infinite}
 .resizer{width:14px;cursor:pointer;background:transparent;flex-shrink:0;position:relative;z-index:10;touch-action:none;margin:0 -4px}
@@ -899,6 +900,7 @@ const[genLoading,sGenLoading]=useState(false);
 const[genError,sGenError]=useState(null);
 const[mode,sMode]=useState("txt2img"); // txt2img | img2img | inpaint
 const[dragMode,sDragMode]=useState(false); // chunk drag reorder mode
+const[baseDrop,sBaseDrop]=useState(false); // base button dropdown
 const dragRef=useRef({active:false,chunkId:null,sourceTg:null,sourceColId:null,sourceSide:null,ghostEl:null,dropTarget:null});
 // drag useEffect
 useEffect(()=>{
@@ -2344,12 +2346,23 @@ return(
 <div style={{flex:1}}/>
 
 {/* Gen group: 생성 | 베이스 | 바이브 */}
-<div style={{display:"flex",borderRadius:8,overflow:"hidden",border:"1px solid rgba(120,90,255,.2)",flexShrink:0}}>
-<button onClick={()=>sPage("gen")} style={{fontSize:11,fontWeight:600,padding:"6px 12px",border:"none",borderRight:"1px solid rgba(120,90,255,.15)",
+<div style={{display:"flex",borderRadius:8,border:"1px solid rgba(120,90,255,.2)",flexShrink:0}}>
+<button onClick={()=>sPage("gen")} style={{fontSize:11,fontWeight:600,padding:"6px 12px",border:"none",borderRight:"1px solid rgba(120,90,255,.15)",borderRadius:"7px 0 0 7px",
   background:page==="gen"?"rgba(120,90,255,.18)":"transparent",color:page==="gen"?"#b095ff":"#666",cursor:"pointer"}}>🎨 생성</button>
-<button onClick={uploadBaseImg} style={{fontSize:11,fontWeight:600,padding:"6px 12px",border:"none",borderRight:"1px solid rgba(120,90,255,.15)",
-  background:baseImg?"rgba(120,90,255,.1)":"transparent",color:baseImg?"#b095ff":"#666",cursor:"pointer"}}>🖼 베이스</button>
-<button onClick={aVI} style={{fontSize:11,fontWeight:600,padding:"6px 12px",border:"none",
+<div style={{position:"relative"}}>
+<button onClick={()=>sBaseDrop(p=>!p)} style={{fontSize:11,fontWeight:600,padding:"6px 12px",border:"none",borderRight:"1px solid rgba(120,90,255,.15)",
+  background:baseImg?"rgba(120,90,255,.1)":baseDrop?"rgba(120,90,255,.12)":"transparent",color:baseImg?"#b095ff":"#666",cursor:"pointer"}}>🖼 베이스 ▾</button>
+{baseDrop&&<div style={{position:"absolute",top:"100%",left:0,zIndex:999,marginTop:4,background:"#1a1a30",border:"1px solid rgba(120,90,255,.3)",borderRadius:8,overflow:"hidden",boxShadow:"0 8px 24px rgba(0,0,0,.5)",minWidth:150}}>
+<button onClick={()=>{sBaseDrop(false);uploadBaseImg()}} className="base-drop-item" style={{display:"block",width:"100%",padding:"10px 14px",border:"none",background:"transparent",color:"#b095ff",fontSize:12,fontWeight:600,cursor:"pointer",textAlign:"left",borderBottom:"1px solid rgba(255,255,255,.06)"}}>📁 이미지 업로드</button>
+<button onClick={()=>{sBaseDrop(false);
+  const c=document.createElement("canvas");c.width=se.width;c.height=se.height;
+  const ctx=c.getContext("2d");ctx.fillStyle="#ffffff";ctx.fillRect(0,0,c.width,c.height);
+  sEditSrc(c.toDataURL("image/png"));sEditMode("edit");
+}} className="base-drop-item" style={{display:"block",width:"100%",padding:"10px 14px",border:"none",background:"transparent",color:"#5cb8ff",fontSize:12,fontWeight:600,cursor:"pointer",textAlign:"left"}}>🖌 캔버스 작성 <span style={{fontSize:9,color:"#666",fontWeight:400}}>({se.width}×{se.height})</span></button>
+</div>}
+{baseDrop&&<div onClick={()=>sBaseDrop(false)} style={{position:"fixed",inset:0,zIndex:998}}/>}
+</div>
+<button onClick={aVI} style={{fontSize:11,fontWeight:600,padding:"6px 12px",border:"none",borderRadius:"0 7px 7px 0",
   background:vibeRefs.length>0?"rgba(255,140,60,.1)":"transparent",color:vibeRefs.length>0?"#fa5":"#666",cursor:"pointer"}}>🎨 바이브{vibeRefs.length>0&&<span style={{fontSize:9,marginLeft:3,opacity:.7}}>({vibeRefs.length})</span>}</button>
 </div>
 
