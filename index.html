@@ -21,6 +21,25 @@ try{
   console.log("[BG-Removal] loaded OK");
 }catch(e){console.warn("[BG-Removal] module load failed, will retry on use:",e.message)}
 </script>
+<script type="module">
+// T5 Tokenizer for accurate NAI V4/V4.5 token counting (~512 T5 tokens limit)
+(async()=>{
+  try{
+    const{AutoTokenizer}=await import("https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.4.1/+esm");
+    const tokenizer=await AutoTokenizer.from_pretrained("Xenova/flan-t5-small",{progress_callback:undefined});
+    // Validate
+    const test=tokenizer.encode("test");
+    if(!test||test.length===0)throw new Error("encode returned empty");
+    window._t5Tokenizer=tokenizer;
+    window._t5Ready=true;
+    console.log("[T5-Tokenizer] loaded OK, test='test' →",test.length,"tokens");
+    window.dispatchEvent(new Event("t5-ready"));
+  }catch(e){
+    console.warn("[T5-Tokenizer] load failed, using fallback estimator:",e.message);
+    window._t5Ready=false;
+  }
+})();
+</script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html{height:100%;height:-webkit-fill-available;overscroll-behavior:none}
@@ -42,6 +61,15 @@ select option{background:#1a1a30;color:#ddd}
 .anlas-badge{background:rgba(120,90,255,.15);border:1px solid rgba(120,90,255,.25);border-radius:14px;padding:4px 12px;font-size:12px;color:#b095ff;font-weight:600;display:flex;align-items:center;gap:5px}
 @keyframes spin{to{transform:rotate(360deg)}}
 @keyframes loadbar{0%{left:-40%;width:40%}50%{left:20%;width:60%}100%{left:100%;width:40%}}
+/* Token gauge bar */
+.tok-gauge{height:6px;border-radius:3px;background:rgba(255,255,255,.06);overflow:hidden;position:relative;flex:1;min-width:40px;max-width:120px}
+.tok-gauge-fill{height:100%;border-radius:3px;transition:width .3s ease,background .3s ease}
+.tok-gauge-safe .tok-gauge-fill{background:linear-gradient(90deg,#785aff,#9b7aff)}
+.tok-gauge-warn .tok-gauge-fill{background:linear-gradient(90deg,#cc8800,#ffaa22)}
+.tok-gauge-over .tok-gauge-fill{background:linear-gradient(90deg,#d44,#ff5555);animation:tok-pulse 1.2s ease-in-out infinite}
+@keyframes tok-pulse{0%,100%{opacity:1}50%{opacity:.6}}
+.tok-label{font-size:9px;font-family:'JetBrains Mono',monospace;font-weight:600;white-space:nowrap}
+.t5-badge{font-size:8px;padding:1px 4px;border-radius:3px;font-weight:600;font-family:'JetBrains Mono',monospace;letter-spacing:.3px;vertical-align:middle}
 .gen-loadbar{position:fixed;top:0;left:0;right:0;height:3px;z-index:9999;overflow:hidden;background:rgba(120,90,255,.1)}
 .gen-loadbar::after{content:'';position:absolute;top:0;height:100%;background:linear-gradient(90deg,#785aff,#ff6b9d);animation:loadbar 1.5s ease-in-out infinite}
 .resizer{width:14px;cursor:pointer;background:transparent;flex-shrink:0;position:relative;z-index:10;touch-action:none;margin:0 -4px}
@@ -82,6 +110,25 @@ const G=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 const LS="nai-pb-v4";const PK="nai-pb";const FS=!!window.showSaveFilePicker;
 function ll(k,f){try{const v=localStorage.getItem(k);return v?JSON.parse(v):f}catch{return f}}
 function ls(k,d){try{localStorage.setItem(k,JSON.stringify(d))}catch{}}
+
+// ═══ T5 Token Counter (NAI V4/V4.5 uses T5 tokenizer, ~512 token limit) ═══
+function countT5Tokens(text){
+  if(!text||!text.trim())return 0;
+  if(window._t5Tokenizer){
+    try{
+      const ids=window._t5Tokenizer.encode(text);
+      // T5 tokenizer appends EOS token (id=1) — don't count it
+      return Math.max(0,ids.length-1);
+    }catch(e){console.warn("T5 encode error:",e)}
+  }
+  // Fallback: T5 averages ~3.5 chars/token for English tags/prompts
+  // More conservative than 4 to avoid under-counting
+  return Math.ceil(text.length/3.5);
+}
+function countChkTokens(chks,side,isChkActive,getChkPrompt){
+  return chks.filter(c=>c.side===side&&isChkActive(c))
+    .reduce((s,c)=>s+countT5Tokens(getChkPrompt(c)),0);
+}
 
 // IndexedDB for full-size image storage
 const IDB_NAME="nai-pb-images";const IDB_STORE="images";
@@ -935,10 +982,19 @@ const Rz=({panel})=><div className="resizer">
     onClick={()=>sResizePanel(resizePanel===panel?null:panel)}/>
 </div>;
 const[anlas,sAnlas]=useState(null); // {anlas, tier, active}
+const[t5Ready,sT5Ready]=useState(!!window._t5Ready);
 const[history,sHistory]=useState(()=>ll("nai-pb-hist",[]));
 const[page,sPage]=useState("gen");
 const[histMenu,sHistMenu]=useState(null);
 const[histGallery,sHistGallery]=useState(null); // {idx, url} for fullscreen gallery
+
+// T5 tokenizer ready listener
+useEffect(()=>{
+  if(window._t5Ready){sT5Ready(true);return}
+  const h=()=>sT5Ready(true);
+  window.addEventListener("t5-ready",h);
+  return()=>window.removeEventListener("t5-ready",h);
+},[]);
 
 // Gallery keyboard navigation
 useEffect(()=>{
@@ -2532,20 +2588,26 @@ return(
 
 {/* Base columns group */}
 {(()=>{
-  const basePosTokens=baseChks.filter(c=>c.side==="pos"&&isChkActive(c)).reduce((s,c)=>s+Math.ceil(getChkPrompt(c).length/4),0);
-  const baseNegTokens=baseChks.filter(c=>c.side==="neg"&&isChkActive(c)).reduce((s,c)=>s+Math.ceil(getChkPrompt(c).length/4),0);
-  const allPosTokens=basePosTokens+activeChars.reduce((s,ch)=>s+ch.chks.filter(c=>c.side==="pos"&&isChkActive(c)).reduce((s2,c)=>s2+Math.ceil(getChkPrompt(c).length/4),0),0);
-  const allNegTokens=baseNegTokens+activeChars.reduce((s,ch)=>s+ch.chks.filter(c=>c.side==="neg"&&isChkActive(c)).reduce((s2,c)=>s2+Math.ceil(getChkPrompt(c).length/4),0),0);
+  const basePosTokens=countChkTokens(baseChks,"pos",isChkActive,getChkPrompt);
+  const baseNegTokens=countChkTokens(baseChks,"neg",isChkActive,getChkPrompt);
+  const allPosTokens=basePosTokens+activeChars.reduce((s,ch)=>s+countChkTokens(ch.chks,"pos",isChkActive,getChkPrompt),0);
+  const allNegTokens=baseNegTokens+activeChars.reduce((s,ch)=>s+countChkTokens(ch.chks,"neg",isChkActive,getChkPrompt),0);
   const maxTokens=512;
   const totalUsed=allPosTokens+allNegTokens;
+  const pct=Math.min(totalUsed/maxTokens*100,100);
   const overLimit=totalUsed>maxTokens;
+  const gaugeClass=overLimit?"tok-gauge-over":pct>80?"tok-gauge-warn":"tok-gauge-safe";
   const isOpen=!(collapsed||{}).__base;
   return(<div style={{marginBottom:10}}>
-    <div onClick={()=>up(p=>({...p,collapsed:{...(p.collapsed||{}),__base:!(p.collapsed||{}).__base}}))} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",background:"rgba(120,90,255,.06)",borderRadius:isOpen?"8px 8px 0 0":"8px",cursor:"pointer",border:"1px solid rgba(120,90,255,.12)"}}>
+    <div onClick={()=>up(p=>({...p,collapsed:{...(p.collapsed||{}),__base:!(p.collapsed||{}).__base}}))} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",background:"rgba(120,90,255,.06)",borderRadius:isOpen?"8px 8px 0 0":"8px",cursor:"pointer",border:"1px solid rgba(120,90,255,.12)",flexWrap:"wrap"}}>
       <span style={{fontSize:12,color:"#785aff",transition:"transform .2s",transform:isOpen?"rotate(90deg)":"rotate(0)"}}>▶</span>
-      <span style={{fontSize:13,fontWeight:700,color:"#c8b8ff",flex:1}}>베이스</span>
-      <span style={{fontSize:10,color:"#888",fontFamily:"'JetBrains Mono',monospace"}}>{basePosTokens}+{baseNegTokens}t</span>
-      <span style={{fontSize:10,padding:"2px 6px",borderRadius:4,fontWeight:600,fontFamily:"'JetBrains Mono',monospace",background:overLimit?"rgba(255,60,60,.15)":"rgba(120,90,255,.1)",color:overLimit?"#f55":"#9988dd"}}>{totalUsed}/{maxTokens}</span>
+      <span style={{fontSize:13,fontWeight:700,color:"#c8b8ff",flex:1,minWidth:40}}>베이스</span>
+      <span className="t5-badge" style={{background:t5Ready?"rgba(80,200,120,.12)":"rgba(255,255,255,.06)",color:t5Ready?"#5c8":"#666"}}>{t5Ready?"T5":"≈"}</span>
+      <span className="tok-label" style={{color:"#888"}}>{basePosTokens}+{baseNegTokens}t</span>
+      <div className={`tok-gauge ${gaugeClass}`} title={`${totalUsed}/${maxTokens} T5 tokens (전체 프롬프트)`}>
+        <div className="tok-gauge-fill" style={{width:`${pct}%`}}/>
+      </div>
+      <span className="tok-label" style={{color:overLimit?"#f55":pct>80?"#fa5":"#9988dd"}}>{totalUsed}/{maxTokens}</span>
       <button onClick={e=>{e.stopPropagation();aC("b")}} style={{...Z.pB,width:24,height:24,fontSize:12}}>+</button>
     </div>
     {isOpen&&<div style={{border:"1px solid rgba(120,90,255,.08)",borderTop:"none",borderRadius:"0 0 8px 8px",padding:8}}>
@@ -2561,15 +2623,20 @@ return(
 
 {/* Character column groups */}
 {activeChars.map(ch=>{
-  const chPosTokens=ch.chks.filter(c=>c.side==="pos"&&isChkActive(c)).reduce((s,c)=>s+Math.ceil(getChkPrompt(c).length/4),0);
-  const chNegTokens=ch.chks.filter(c=>c.side==="neg"&&isChkActive(c)).reduce((s,c)=>s+Math.ceil(getChkPrompt(c).length/4),0);
+  const chPosTokens=countChkTokens(ch.chks,"pos",isChkActive,getChkPrompt);
+  const chNegTokens=countChkTokens(ch.chks,"neg",isChkActive,getChkPrompt);
+  const chTotal=chPosTokens+chNegTokens;
+  const chPct=Math.min(chTotal/128*100,100); // per-character gauge scaled to ~128
   const isOpen=!(collapsed||{})[ch.id];
   return(<div key={ch.id} style={{marginBottom:10}}>
-    <div onClick={()=>up(p=>({...p,collapsed:{...(p.collapsed||{}),[ch.id]:!(p.collapsed||{})[ch.id]}}))} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",background:"rgba(255,140,60,.06)",borderRadius:isOpen?"8px 8px 0 0":"8px",cursor:"pointer",border:"1px solid rgba(255,140,60,.12)"}}>
+    <div onClick={()=>up(p=>({...p,collapsed:{...(p.collapsed||{}),[ch.id]:!(p.collapsed||{})[ch.id]}}))} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",background:"rgba(255,140,60,.06)",borderRadius:isOpen?"8px 8px 0 0":"8px",cursor:"pointer",border:"1px solid rgba(255,140,60,.12)",flexWrap:"wrap"}}>
       <span style={{fontSize:12,color:"#c90",transition:"transform .2s",transform:isOpen?"rotate(90deg)":"rotate(0)"}}>▶</span>
       <div className="ct" style={{width:24,height:24,borderRadius:4,fontSize:11}}><span>👤</span></div>
-      <span style={{fontSize:13,fontWeight:700,color:"#ffb080",flex:1}}>{ch.name}</span>
-      <span style={{fontSize:10,color:"#888",fontFamily:"'JetBrains Mono',monospace"}}>{chPosTokens}+{chNegTokens}t</span>
+      <span style={{fontSize:13,fontWeight:700,color:"#ffb080",flex:1,minWidth:40}}>{ch.name}</span>
+      <span className="tok-label" style={{color:"#888"}}>{chPosTokens}+{chNegTokens}t</span>
+      <div className={`tok-gauge ${chPct>100?"tok-gauge-over":chPct>80?"tok-gauge-warn":"tok-gauge-safe"}`} style={{maxWidth:80}} title={`캐릭터: ${chTotal} T5 tokens`}>
+        <div className="tok-gauge-fill" style={{width:`${chPct}%`}}/>
+      </div>
       <button onClick={e=>{e.stopPropagation();aC(ch.id)}} style={{...Z.pB,width:24,height:24,fontSize:12}}>+</button>
     </div>
     {isOpen&&<div style={{border:"1px solid rgba(255,140,60,.08)",borderTop:"none",borderRadius:"0 0 8px 8px",padding:8}}>
