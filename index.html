@@ -731,7 +731,7 @@ return(<div ref={wrapRef} style={{position:"relative"}}>
 
 
 /* ─── ChunkItem ─── */
-function CI({c,i,t,onM,onE,onD,onDupK,onSG,onAO,onEO,onDO,onMO,onDupO}){
+function CI({c,i,t,onM,onE,onD,onDupK,onSG,onAO,onEO,onDO,onMO,onDupO,dragMode,tg,colId,side,onDragStart}){
 const selOpt=(c.options||[]).find(o=>o.id===c.selected);
 const active=!!c.selected;
 const[open,setOpen]=React.useState(false);
@@ -747,8 +747,9 @@ const toggleDD=()=>{
   setOpen(!open);
 };
 return(
-<div ref={elRef} style={{position:"relative",background:active?"rgba(90,60,200,.12)":"rgba(255,255,255,.02)",border:`1px solid ${active?(open?"rgba(120,90,255,.5)":"rgba(120,90,255,.28)"):"rgba(255,255,255,.06)"}`,borderRadius:6,padding:"4px 6px",marginBottom:3,transition:"all .15s"}}>
+<div ref={elRef} data-chunk-id={c.id} data-chunk-tg={tg} data-chunk-col={colId} data-chunk-side={side} style={{position:"relative",background:active?"rgba(90,60,200,.12)":"rgba(255,255,255,.02)",border:`1px solid ${active?(open?"rgba(120,90,255,.5)":"rgba(120,90,255,.28)"):"rgba(255,255,255,.06)"}`,borderRadius:6,padding:"4px 6px",marginBottom:3,transition:"all .15s"}}>
 <div style={{display:"flex",alignItems:"center",gap:4}}>
+{dragMode&&<div onTouchStart={e=>onDragStart(e,c.id,tg,colId,side)} onMouseDown={e=>{e.preventDefault();onDragStart({touches:[{clientX:e.clientX,clientY:e.clientY}],currentTarget:e.currentTarget,preventDefault:()=>{}},c.id,tg,colId,side)}} style={{width:24,height:28,display:"flex",alignItems:"center",justifyContent:"center",cursor:"grab",touchAction:"none",color:"#666",fontSize:14,flexShrink:0,userSelect:"none",WebkitUserSelect:"none"}}>⠿</div>}
 <div style={{flex:1,minWidth:0,cursor:"pointer"}} onClick={toggleDD}>
 <div style={{fontSize:12,fontWeight:600,color:active?"#c0b0ff":"#777"}}>{c.label}</div>
 <div style={{fontSize:10,color:active?"#9d8aee":"#555",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:120}}>{selOpt?selOpt.name:"(선택 없음)"}</div>
@@ -790,7 +791,7 @@ return(
 </div>)}
 
 /* ─── ColPanel ─── */
-function CP({col,ci,tt,chks,lb,oMC,oRC,oDC,oDupCol,oAG,oEK,oDK,oDupK,oMK,oSG,oAO,oEO,oDO,oMO,oDupO}){
+function CP({col,ci,tt,chks,lb,oMC,oRC,oDC,oDupCol,oAG,oEK,oDK,oDupK,oMK,oSG,oAO,oEO,oDO,oMO,oDupO,dragMode,tg,onDragStart}){
 const p=chks.filter(x=>x.colId===col.id&&x.side==="pos").sort((a,b)=>a.order-b.order);
 const n=chks.filter(x=>x.colId===col.id&&x.side==="neg").sort((a,b)=>a.order-b.order);
 const isC=lb==="c";
@@ -807,14 +808,14 @@ return(<div className="col-panel" style={{minWidth:260,maxWidth:340,flex:"0 0 28
 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
 <span style={{fontSize:11,fontWeight:700,color:"#785aff",letterSpacing:.5}}>POSITIVE</span>
 <button onClick={()=>oAG(col.id,"pos")} style={{...Z.pB,width:32,height:32}}>+</button></div>
-{p.map((x,i)=><CI key={x.id} c={x} i={i} t={p.length} onM={oMK} onE={oEK} onD={oDK} onSG={oSG} onAO={oAO} onEO={oEO} onDO={oDO} onMO={oMO} onDupO={oDupO} onDupK={oDupK}/>)}
-{p.length===0&&<div style={Z.eH}>+ 추가</div>}</div>
+{p.map((x,i)=><CI key={x.id} c={x} i={i} t={p.length} onM={oMK} onE={oEK} onD={oDK} onSG={oSG} onAO={oAO} onEO={oEO} onDO={oDO} onMO={oMO} onDupO={oDupO} onDupK={oDupK} dragMode={dragMode} tg={tg} colId={col.id} side="pos" onDragStart={onDragStart}/>)}
+{p.length===0&&<div data-drop-zone="1" data-drop-tg={tg} data-drop-col={col.id} data-drop-side="pos" style={{...Z.eH,minHeight:dragMode?40:undefined,border:dragMode?"2px dashed rgba(120,90,255,.2)":"none",borderRadius:6}}>+ 추가</div>}</div>
 <div>
 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
 <span style={{fontSize:11,fontWeight:700,color:"#f55",letterSpacing:.5}}>NEGATIVE</span>
 <button onClick={()=>oAG(col.id,"neg")} style={{...Z.pB,borderColor:"rgba(255,68,68,.3)",color:"#f88",width:32,height:32}}>+</button></div>
-{n.map((x,i)=><CI key={x.id} c={x} i={i} t={n.length} onM={oMK} onE={oEK} onD={oDK} onSG={oSG} onAO={oAO} onEO={oEO} onDO={oDO} onMO={oMO} onDupO={oDupO} onDupK={oDupK}/>)}
-{n.length===0&&<div style={Z.eH}>+ 추가</div>}</div></div></div>)}
+{n.map((x,i)=><CI key={x.id} c={x} i={i} t={n.length} onM={oMK} onE={oEK} onD={oDK} onSG={oSG} onAO={oAO} onEO={oEO} onDO={oDO} onMO={oMO} onDupO={oDupO} onDupK={oDupK} dragMode={dragMode} tg={tg} colId={col.id} side="neg" onDragStart={onDragStart}/>)}
+{n.length===0&&<div data-drop-zone="1" data-drop-tg={tg} data-drop-col={col.id} data-drop-side="neg" style={{...Z.eH,minHeight:dragMode?40:undefined,border:dragMode?"2px dashed rgba(255,68,68,.2)":"none",borderRadius:6}}>+ 추가</div>}</div></div></div>)}
 
 /* ─── OutBox ─── */
 function OB({label,color,text,cp,onC}){return(<div style={{flex:1,minWidth:220}}>
@@ -850,6 +851,22 @@ const[genImg,sGenImg]=useState(null); // generated image URL
 const[genLoading,sGenLoading]=useState(false);
 const[genError,sGenError]=useState(null);
 const[mode,sMode]=useState("txt2img"); // txt2img | img2img | inpaint
+const[dragMode,sDragMode]=useState(false); // chunk drag reorder mode
+const dragRef=useRef({active:false,chunkId:null,sourceTg:null,sourceColId:null,sourceSide:null,ghostEl:null,dropTarget:null});
+// drag useEffect
+useEffect(()=>{
+  if(!dragMode)return;
+  const onTouchMove=e=>dragMoveChunk(e);
+  const onTouchEnd=e=>dragEndChunk(e);
+  const onMouseMove=e=>{if(!dragRef.current.active)return;e.preventDefault();dragMoveChunk({touches:[{clientX:e.clientX,clientY:e.clientY}],preventDefault:()=>{}})};
+  const onMouseUp=e=>{if(!dragRef.current.active)return;dragEndChunk(e)};
+  document.addEventListener("touchmove",onTouchMove,{passive:false});
+  document.addEventListener("touchend",onTouchEnd);
+  document.addEventListener("touchcancel",onTouchEnd);
+  document.addEventListener("mousemove",onMouseMove);
+  document.addEventListener("mouseup",onMouseUp);
+  return()=>{document.removeEventListener("touchmove",onTouchMove);document.removeEventListener("touchend",onTouchEnd);document.removeEventListener("touchcancel",onTouchEnd);document.removeEventListener("mousemove",onMouseMove);document.removeEventListener("mouseup",onMouseUp)};
+},[dragMode]);
 const[baseImg,sBaseImg]=useState(null); // base image URL for img2img
 const[i2iStrength,sI2iStr]=useState(()=>parseFloat(localStorage.getItem("nai-pb-i2i-str"))||0.6);
 const[i2iNoise,sI2iNoise]=useState(()=>parseFloat(localStorage.getItem("nai-pb-i2i-noise"))||0);
@@ -2124,6 +2141,116 @@ const mK=(tg,id,d)=>up(p=>{
   const u=chks.map(c=>{if(c.id===id)return{...c,order:so2};if(c.id===sw)return{...c,order:mo2};return c});
   if(tg==="b")return{...p,baseChks:u};return{...p,chars:p.chars.map(ch2=>ch2.id!==tg?ch2:{...ch2,chks:u})}});
 
+// Move chunk to different column/side/position (for drag & drop)
+const moveChunkTo=(srcTg,chunkId,dstTg,dstColId,dstSide,dstIdx)=>up(p=>{
+  // Get source chunk
+  const srcChks=srcTg==="b"?p.baseChks:p.chars.find(c=>c.id===srcTg)?.chks||[];
+  const chunk=srcChks.find(c=>c.id===chunkId);
+  if(!chunk)return p;
+  // Remove from source
+  let np={...p};
+  if(srcTg==="b")np.baseChks=np.baseChks.filter(c=>c.id!==chunkId);
+  else np.chars=np.chars.map(ch=>ch.id!==srcTg?ch:{...ch,chks:ch.chks.filter(c=>c.id!==chunkId)});
+  // Prepare moved chunk
+  const moved={...chunk,colId:dstColId,side:dstSide};
+  // Get destination chunks and recalculate orders
+  const dstChks=dstTg==="b"?np.baseChks:np.chars.find(c=>c.id===dstTg)?.chks||[];
+  const siblings=dstChks.filter(c=>c.colId===dstColId&&c.side===dstSide).sort((a,b)=>a.order-b.order);
+  // Insert at position
+  const pos=Math.max(0,Math.min(dstIdx,siblings.length));
+  siblings.splice(pos,0,moved);
+  siblings.forEach((c,i)=>c.order=i);
+  // Update moved chunk order
+  moved.order=pos;
+  // Recalculate all orders for this col+side
+  const updated=dstChks.filter(c=>!(c.colId===dstColId&&c.side===dstSide));
+  updated.push(...siblings);
+  updated.push(moved);
+  // Deduplicate (moved is already in siblings)
+  const final=[...new Map(updated.map(c=>[c.id,c])).values()];
+  if(dstTg==="b")np.baseChks=final;
+  else np.chars=np.chars.map(ch=>ch.id!==dstTg?ch:{...ch,chks:final});
+  return np;
+});
+
+// Drag system for touch devices
+const dragStartChunk=(e,chunkId,tg,colId,side)=>{
+  const touch=e.touches[0];
+  const el=e.currentTarget.closest("[data-chunk-id]");
+  if(!el)return;
+  e.preventDefault();
+  const rect=el.getBoundingClientRect();
+  // Create ghost
+  const ghost=el.cloneNode(true);
+  ghost.style.cssText="position:fixed;z-index:10000;pointer-events:none;opacity:0.8;width:"+rect.width+"px;transform:scale(1.03);box-shadow:0 8px 32px rgba(120,90,255,.4);border:2px solid #785aff;border-radius:6px;";
+  ghost.style.left=(rect.left)+"px";ghost.style.top=(rect.top)+"px";
+  document.body.appendChild(ghost);
+  dragRef.current={active:true,chunkId,sourceTg:tg,sourceColId:colId,sourceSide:side,ghostEl:ghost,
+    offsetX:touch.clientX-rect.left,offsetY:touch.clientY-rect.top,startX:touch.clientX,startY:touch.clientY};
+  el.style.opacity="0.3";
+  dragRef.current.sourceEl=el;
+};
+const dragMoveChunk=(e)=>{
+  const dr=dragRef.current;if(!dr.active)return;
+  e.preventDefault();
+  const touch=e.touches[0];
+  dr.ghostEl.style.left=(touch.clientX-dr.offsetX)+"px";
+  dr.ghostEl.style.top=(touch.clientY-dr.offsetY)+"px";
+  // Find drop target
+  dr.ghostEl.style.display="none";
+  const underEl=document.elementFromPoint(touch.clientX,touch.clientY);
+  dr.ghostEl.style.display="";
+  // Clear old indicators
+  document.querySelectorAll(".drag-indicator").forEach(el=>el.remove());
+  if(!underEl)return;
+  // Find closest chunk or drop zone
+  const chunkEl=underEl.closest("[data-chunk-id]");
+  const zoneEl=underEl.closest("[data-drop-zone]");
+  if(chunkEl&&chunkEl.dataset.chunkId!==dr.chunkId){
+    const r=chunkEl.getBoundingClientRect();
+    const mid=r.top+r.height/2;
+    const before=touch.clientY<mid;
+    const ind=document.createElement("div");
+    ind.className="drag-indicator";
+    ind.style.cssText="position:fixed;left:"+r.left+"px;width:"+r.width+"px;height:3px;background:#785aff;border-radius:2px;z-index:9999;pointer-events:none;";
+    ind.style.top=(before?r.top-2:r.bottom-1)+"px";
+    document.body.appendChild(ind);
+    dr.dropTarget={tg:chunkEl.dataset.chunkTg,colId:chunkEl.dataset.chunkCol,side:chunkEl.dataset.chunkSide,
+      refId:chunkEl.dataset.chunkId,before};
+  }else if(zoneEl){
+    const r=zoneEl.getBoundingClientRect();
+    const ind=document.createElement("div");
+    ind.className="drag-indicator";
+    ind.style.cssText="position:fixed;left:"+r.left+"px;width:"+r.width+"px;height:3px;background:#785aff;border-radius:2px;z-index:9999;pointer-events:none;top:"+(r.top+r.height/2)+"px;";
+    document.body.appendChild(ind);
+    dr.dropTarget={tg:zoneEl.dataset.dropTg,colId:zoneEl.dataset.dropCol,side:zoneEl.dataset.dropSide,refId:null,before:true};
+  }else{
+    dr.dropTarget=null;
+  }
+};
+const dragEndChunk=(e)=>{
+  const dr=dragRef.current;if(!dr.active)return;
+  // Clean up
+  if(dr.ghostEl)dr.ghostEl.remove();
+  if(dr.sourceEl)dr.sourceEl.style.opacity="1";
+  document.querySelectorAll(".drag-indicator").forEach(el=>el.remove());
+  // Perform move
+  if(dr.dropTarget){
+    const dt=dr.dropTarget;
+    const dstTg=dt.tg;const dstColId=dt.colId;const dstSide=dt.side;
+    // Calculate destination index
+    const dstChks=(dstTg==="b"?D.baseChks:D.chars.find(c=>c.id===dstTg)?.chks||[]);
+    const siblings=dstChks.filter(c=>c.colId===dstColId&&c.side===dstSide).sort((a,b)=>a.order-b.order);
+    let dstIdx=siblings.length;
+    if(dt.refId){
+      const refIdx=siblings.findIndex(c=>c.id===dt.refId);
+      dstIdx=dt.before?refIdx:refIdx+1;
+    }
+    moveChunkTo(dr.sourceTg,dr.chunkId,dstTg,dstColId,dstSide,dstIdx);
+  }
+  dragRef.current={active:false,chunkId:null,sourceTg:null,sourceColId:null,sourceSide:null,ghostEl:null,dropTarget:null};
+};
+
 /* ── Modal save ── */
 const hSv=()=>{if(!mo)return;const lb=lR.current?.value.trim();const tx=tR.current?.value.trim();const{t,tg,d}=mo;
 if(t==="ac"){if(!lb)return;up(p=>{if(tg==="b")return{...p,baseCols:[...p.baseCols,{id:G(),name:lb}]};return{...p,chars:p.chars.map(ch=>ch.id!==tg?ch:{...ch,cols:[...ch.cols,{id:G(),name:lb}]})}})}
@@ -2393,6 +2520,16 @@ return(
 {/* RIGHT - Collapsible Column Groups */}
 <div className="scroll-y" style={{flex:1,padding:"10px 12px",overflow:"auto"}}>
 
+{/* Edit mode toggle */}
+<div style={{display:"flex",alignItems:"center",justifyContent:"flex-end",marginBottom:8}}>
+<button onClick={()=>sDragMode(!dragMode)} style={{
+  padding:"5px 12px",borderRadius:6,fontSize:11,fontWeight:600,cursor:"pointer",
+  background:dragMode?"rgba(255,140,60,.2)":"rgba(255,255,255,.04)",
+  border:`1px solid ${dragMode?"rgba(255,140,60,.4)":"rgba(255,255,255,.1)"}`,
+  color:dragMode?"#fa5":"#666",transition:"all .2s"
+}}>{dragMode?"⠿ 드래그 편집 ON":"⠿ 드래그 편집"}</button>
+</div>
+
 {/* Base columns group */}
 {(()=>{
   const basePosTokens=baseChks.filter(c=>c.side==="pos"&&isChkActive(c)).reduce((s,c)=>s+Math.ceil(getChkPrompt(c).length/4),0);
@@ -2416,7 +2553,7 @@ return(
         {baseCols.map((col,i)=><CP key={col.id} col={col} ci={i} tt={baseCols.length} chks={baseChks} lb="b"
           oMC={(id,d)=>mC("b",id,d)} oRC={c=>rC("b",c)} oDC={id=>dCC("b",id)}
           oAG={(cid,s)=>aG("b",cid,s)} oEK={c=>eK("b",c)} oDK={id=>dK("b",id)} oMK={(id,d)=>mK("b",id,d)}
-          oSG={(chkId,optId)=>sG("b",chkId,optId)} oAO={chkId=>aO("b",chkId)} oEO={(chkId,opt)=>eO("b",chkId,opt)} oDO={(chkId,optId)=>dO("b",chkId,optId)} oMO={(chkId,optId,d)=>mO("b",chkId,optId,d)} oDupO={(chkId,optId)=>dupO("b",chkId,optId)} oDupK={id=>dupK("b",id)} oDupCol={id=>dupCol("b",id)}/>)}
+          oSG={(chkId,optId)=>sG("b",chkId,optId)} oAO={chkId=>aO("b",chkId)} oEO={(chkId,opt)=>eO("b",chkId,opt)} oDO={(chkId,optId)=>dO("b",chkId,optId)} oMO={(chkId,optId,d)=>mO("b",chkId,optId,d)} oDupO={(chkId,optId)=>dupO("b",chkId,optId)} oDupK={id=>dupK("b",id)} oDupCol={id=>dupCol("b",id)} dragMode={dragMode} tg="b" onDragStart={dragStartChunk}/>)}
       </div>
     </div>}
   </div>);
@@ -2440,7 +2577,7 @@ return(
         {ch.cols.map((col,i)=><CP key={col.id} col={col} ci={i} tt={ch.cols.length} chks={ch.chks} lb="c"
           oMC={(id,d)=>mC(ch.id,id,d)} oRC={c=>rC(ch.id,c)} oDC={id=>dCC(ch.id,id)}
           oAG={(cid,s)=>aG(ch.id,cid,s)} oEK={c=>eK(ch.id,c)} oDK={id=>dK(ch.id,id)} oMK={(id,d)=>mK(ch.id,id,d)}
-          oSG={(chkId,optId)=>sG(ch.id,chkId,optId)} oAO={chkId=>aO(ch.id,chkId)} oEO={(chkId,opt)=>eO(ch.id,chkId,opt)} oDO={(chkId,optId)=>dO(ch.id,chkId,optId)} oMO={(chkId,optId,d)=>mO(ch.id,chkId,optId,d)} oDupO={(chkId,optId)=>dupO(ch.id,chkId,optId)} oDupK={id=>dupK(ch.id,id)} oDupCol={id=>dupCol(ch.id,id)}/>)}
+          oSG={(chkId,optId)=>sG(ch.id,chkId,optId)} oAO={chkId=>aO(ch.id,chkId)} oEO={(chkId,opt)=>eO(ch.id,chkId,opt)} oDO={(chkId,optId)=>dO(ch.id,chkId,optId)} oMO={(chkId,optId,d)=>mO(ch.id,chkId,optId,d)} oDupO={(chkId,optId)=>dupO(ch.id,chkId,optId)} oDupK={id=>dupK(ch.id,id)} oDupCol={id=>dupCol(ch.id,id)} dragMode={dragMode} tg={ch.id} onDragStart={dragStartChunk}/>)}
       </div>
     </div>}
   </div>);
