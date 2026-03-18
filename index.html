@@ -195,6 +195,45 @@ function cpdbImportJSON(file,onDone){
   };r.readAsText(file);
 }
 
+// Base Preset DB (separate IDB store, mirrors Character Preset DB pattern)
+const BPDB_NAME="nai-pb-basepresets";const BPDB_STORE="presets";
+function bpdbOpen(){
+  return new Promise((res,rej)=>{
+    const req=indexedDB.open(BPDB_NAME,1);
+    req.onupgradeneeded=()=>req.result.createObjectStore(BPDB_STORE);
+    req.onsuccess=()=>res(req.result);
+    req.onerror=()=>rej(req.error);
+  });
+}
+async function bpdbSave(id,data){
+  try{const db=await bpdbOpen();const tx=db.transaction(BPDB_STORE,"readwrite");tx.objectStore(BPDB_STORE).put(JSON.stringify(data),id);await new Promise(r=>{tx.oncomplete=r});db.close()}catch(e){console.warn("bpdbSave:",e)}
+}
+async function bpdbGet(id){
+  try{const db=await bpdbOpen();const tx=db.transaction(BPDB_STORE,"readonly");const req=tx.objectStore(BPDB_STORE).get(id);return new Promise((res)=>{req.onsuccess=()=>{db.close();res(req.result?JSON.parse(req.result):null)};req.onerror=()=>{db.close();res(null)}})}catch(e){return null}
+}
+async function bpdbDel(id){
+  try{const db=await bpdbOpen();const tx=db.transaction(BPDB_STORE,"readwrite");tx.objectStore(BPDB_STORE).delete(id);await new Promise(r=>{tx.oncomplete=r});db.close()}catch(e){}
+}
+async function bpdbList(){
+  try{const db=await bpdbOpen();const tx=db.transaction(BPDB_STORE,"readonly");const store=tx.objectStore(BPDB_STORE);
+    return new Promise((res)=>{const keys=[];const req=store.openCursor();req.onsuccess=e=>{const c=e.target.result;if(c){keys.push({id:c.key,data:JSON.parse(c.value)});c.continue()}else{db.close();res(keys)}};req.onerror=()=>{db.close();res([])}})
+  }catch(e){return[]}
+}
+async function bpdbExportJSON(){
+  const list=await bpdbList();
+  const blob=new Blob([JSON.stringify(list.map(x=>x.data),null,2)],{type:"application/json"});
+  const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download="nai-pb-base-presets.json";a.click();URL.revokeObjectURL(url);
+}
+function bpdbImportJSON(file,onDone){
+  const r=new FileReader();r.onload=async v=>{
+    try{const arr=JSON.parse(v.target.result);
+      if(!Array.isArray(arr))throw new Error("배열 형식이 아닙니다");
+      for(const bp of arr){const id=bp.id||("bp_"+Date.now()+"_"+Math.random().toString(36).slice(2,6));await bpdbSave(id,bp)}
+      onDone(null,arr.length);
+    }catch(e){onDone(e.message,0)}
+  };r.readAsText(file);
+}
+
 // WASM WebP encoder — script tag injection (no ESM import, no require)
 let _webpModule=null;
 let _webpLoadAttempted=false;
@@ -292,7 +331,7 @@ const MO=[{v:"nai-diffusion-4-5-full",l:"V4.5 Full"},{v:"nai-diffusion-4-5-curat
 const SA=[{v:"k_euler",l:"Euler"},{v:"k_euler_ancestral",l:"Euler Ancestral"},{v:"k_dpmpp_2s_ancestral",l:"DPM++ 2S Ancestral"},{v:"k_dpmpp_2m",l:"DPM++ 2M"},{v:"k_dpmpp_sde",l:"DPM++ SDE"},{v:"ddim_v3",l:"DDIM"}];
 const RE=[{w:832,h:1216,l:"832×1216 세로"},{w:1216,h:832,l:"1216×832 가로"},{w:1024,h:1024,l:"1024×1024"},{w:1024,h:1536,l:"1024×1536 세로大"},{w:1536,h:1024,l:"1536×1024 가로大"},{w:640,h:640,l:"640×640 소"}];
 
-function DD(){return{baseCols:[{id:G(),name:"베이스"}],baseChks:[],chars:[],activeIds:[],vibeRefs:[],collapsed:{},settings:{...DS}}}
+function DD(){return{baseCols:[{id:G(),name:"베이스"}],baseChks:[],basePresets:[],activeBasePresetIds:[],chars:[],activeIds:[],vibeRefs:[],collapsed:{},settings:{...DS}}}
 
 async function exF(j,fn){if(FS){try{const h=await window.showSaveFilePicker({id:PK,suggestedName:fn+".json",types:[{description:"JSON",accept:{"application/json":[".json"]}}]});const w=await h.createWritable();await w.write(j);await w.close();return 1}catch(e){if(e.name==="AbortError")return 0}}const b=new Blob([j],{type:"application/json"});const u=URL.createObjectURL(b);Object.assign(document.createElement("a"),{href:u,download:fn+".json"}).click();URL.revokeObjectURL(u);return 1}
 async function imF(){if(FS){try{const[h]=await window.showOpenFilePicker({id:PK,types:[{description:"JSON",accept:{"application/json":[".json"]}}]});return JSON.parse(await(await h.getFile()).text())}catch{return null}}return new Promise(r=>{const i=Object.assign(document.createElement("input"),{type:"file",accept:".json"});i.onchange=async e=>{const f=e.target.files[0];if(!f)return r(null);try{r(JSON.parse(await f.text()))}catch{r(null)}};i.click()})}
@@ -1058,10 +1097,13 @@ const editWrapRef=useRef(null);
 const editLayerCanvases=useRef({}); // {id: canvasElement} - actual canvas DOMs
 const lR=useRef(),tR=useRef(),cR=useRef(),nR=useRef();
 
-const{baseCols,baseChks,chars,activeIds:_aid,vibeRefs:_vibeRefs,settings:se,collapsed}=D;
+const{baseCols,baseChks,basePresets:_bpre,activeBasePresetIds:_abpid,chars,activeIds:_aid,vibeRefs:_vibeRefs,settings:se,collapsed}=D;
 const activeIds=_aid||[];
 const vibeRefs=_vibeRefs||[];
+const basePresets=_bpre||[];
+const activeBasePresetIds=_abpid||[];
 const activeChars=chars.filter(c=>activeIds.includes(c.id));
+const activeBasePresets=basePresets.filter(bp=>activeBasePresetIds.includes(bp.id));
 
 // Fix model if not in list (e.g. old localStorage)
 useEffect(()=>{
@@ -1099,6 +1141,24 @@ useEffect(()=>{
   if(oldRefs.length>0&&(!D.vibeRefs||D.vibeRefs.length===0)){
     sD(p=>({...p,vibeRefs:oldRefs,chars:(p.chars||[]).map(ch=>({...ch,refs:[]}))}));
   }
+  // Migrate: ensure basePresets/activeBasePresetIds exist
+  if(!Array.isArray(D.basePresets)||!Array.isArray(D.activeBasePresetIds)){
+    sD(p=>({...p,basePresets:p.basePresets||[],activeBasePresetIds:p.activeBasePresetIds||[]}));
+  }
+  // Migrate: convert baseCols/baseChks → first base preset (if has content)
+  if((D.baseChks||[]).length>0){
+    const bpId=G();
+    const firstColName=(D.baseCols||[])[0]?.name||"베이스";
+    sD(p=>{
+      const newPreset={id:bpId,name:firstColName,cols:p.baseCols||[{id:G(),name:"기본"}],chks:p.baseChks||[],notes:""};
+      return{...p,
+        basePresets:[newPreset,...(p.basePresets||[])],
+        activeBasePresetIds:[bpId,...(p.activeBasePresetIds||[])],
+        baseCols:[{id:G(),name:"베이스"}],baseChks:[]
+      };
+    });
+    console.log("[Migration] baseCols/baseChks → basePreset '"+firstColName+"'");
+  }
 },[]);
 
 useEffect(()=>{ls(LS,D)},[D]);
@@ -1108,14 +1168,20 @@ useEffect(()=>{if(!se.apiToken)return void sAnlas(null);fetchAnlas(se.apiToken).
 const tw=m=>{sTs(m);setTimeout(()=>sTs(null),2000)};
 const up=fn=>sD(p=>fn(p));
 
-/* ── Prompt building (base + per-character) ── */
+/* ── Prompt building (base + base presets + per-character) ── */
 const getChkPrompt=c=>{
   if(!c.selected)return "";
   return(c.options||[]).find(o=>o.id===c.selected)?.prompt?.trim()||"";
 };
 const isChkActive=c=>!!c.selected;
-const buildBasePrompt=s=>{const r=[];baseCols.forEach(col=>{baseChks.filter(c=>c.colId===col.id&&c.side===s&&isChkActive(c)).sort((a,b)=>a.order-b.order).forEach(c=>{const t=getChkPrompt(c);if(t)r.push(t)})});return r.join(", ")};
-const buildCharPrompt=(ch,s)=>{const r=[];ch.cols.forEach(col=>{ch.chks.filter(c=>c.colId===col.id&&c.side===s&&isChkActive(c)).sort((a,b)=>a.order-b.order).forEach(c=>{const t=getChkPrompt(c);if(t)r.push(t)})});return r.join(", ")};
+const buildColChks=(cols,chks,s)=>{const r=[];cols.forEach(col=>{chks.filter(c=>c.colId===col.id&&c.side===s&&isChkActive(c)).sort((a,b)=>a.order-b.order).forEach(c=>{const t=getChkPrompt(c);if(t)r.push(t)})});return r};
+const buildBasePrompt=s=>{
+  const r=[];
+  // Only active base presets contribute to base prompt
+  activeBasePresets.forEach(bp=>{r.push(...buildColChks(bp.cols||[],bp.chks||[],s))});
+  return r.join(", ");
+};
+const buildCharPrompt=(ch,s)=>buildColChks(ch.cols,ch.chks,s).join(", ");
 const pBase=buildBasePrompt("pos"),nBase=buildBasePrompt("neg");
 const charPrompts=activeChars.map(ch=>({name:ch.name,pos:buildCharPrompt(ch,"pos"),neg:buildCharPrompt(ch,"neg")}));
 const pO=[pBase,...charPrompts.map(c=>c.pos)].filter(Boolean).join(", ");
@@ -2041,6 +2107,47 @@ const editBgRemove=async(mode)=>{
   finally{sBgRemoving(false);sBgProgress("")}
 };
 
+/* ── Base Preset ops ── */
+const toggleBasePreset=id=>up(p=>{
+  const ids=p.activeBasePresetIds||[];
+  return{...p,activeBasePresetIds:ids.includes(id)?ids.filter(x=>x!==id):[...ids,id]};
+});
+const bpR=useRef(),bpNR=useRef(); // name ref, notes ref for base preset modal
+const[bpMo,sBpMo]=useState(null); // {t:"a"} | {t:"e",bp:{...}}
+const oABP=()=>sBpMo({t:"a"});
+const oEBP=bp=>sBpMo({t:"e",bp});
+const svBP=()=>{const nm=bpR.current?.value.trim();if(!nm)return;const nt=bpNR.current?.value||"";
+if(bpMo.t==="a"){const id=G();up(p=>({...p,basePresets:[...(p.basePresets||[]),{id,name:nm,cols:[{id:G(),name:nm+" 기본"}],chks:[],notes:nt}]}))}
+else{const bid=bpMo.bp.id;up(p=>({...p,basePresets:(p.basePresets||[]).map(bp=>bp.id===bid?{...bp,name:nm,notes:nt}:bp)}))}sBpMo(null)};
+const dBP=async(id)=>{
+  const bp=(D.basePresets||[]).find(b=>b.id===id);
+  const saved=await bpdbGet(id);
+  const name=bp?.name||"프리셋";
+  let msg;
+  if(saved){msg=`"${name}"을(를) 삭제합니다.\n\n✓ 라이브러리에 저장되어 있습니다.`}
+  else{msg=`"${name}"을(를) 삭제합니다.\n\n⚠ 라이브러리에 저장되어 있지 않습니다.\n삭제하면 복구할 수 없습니다.`}
+  if(!saved){if(!confirm(msg+"\n\n[확인] = 삭제\n[취소] = 취소"))return}
+  else{if(!confirm(msg))return}
+  up(p=>({...p,basePresets:(p.basePresets||[]).filter(b=>b.id!==id),activeBasePresetIds:(p.activeBasePresetIds||[]).filter(x=>x!==id)}));
+  tw("\""+name+"\" 삭제됨");
+};
+const dupBP=id=>up(p=>{
+  const src=(p.basePresets||[]).find(b=>b.id===id);if(!src)return p;
+  const nb={...JSON.parse(JSON.stringify(src)),id:G(),name:src.name+" (복제)"};
+  nb.cols=nb.cols.map(c=>({...c,id:G()}));
+  nb.chks=nb.chks.map(c=>({...c,id:G()}));
+  return{...p,basePresets:[...(p.basePresets||[]),nb]};
+});
+const saveBPToLib=async(bp)=>{await bpdbSave(bp.id,bp);tw("✓ \""+bp.name+"\" 라이브러리에 저장됨")};
+const loadBPFromLib=(preset)=>{
+  const nb={...JSON.parse(JSON.stringify(preset)),id:G()};
+  nb.cols=nb.cols.map(c=>({...c,id:G()}));
+  nb.chks=nb.chks.map(c=>({...c,id:G()}));
+  up(p=>({...p,basePresets:[...(p.basePresets||[]),nb]}));
+  tw("✓ \""+nb.name+"\" 불러옴");
+};
+const delBPFromLib=async(id)=>{if(!confirm("라이브러리에서 삭제?"))return;await bpdbDel(id);const list=await bpdbList();sBasePresetLib(list)};
+
 /* ── Char ops ── */
 const toggleChar=id=>up(p=>{
   const ids=p.activeIds||[];
@@ -2117,6 +2224,7 @@ const toggleVibe=rid=>{
 const replaceVibeImg=rid=>{const i=document.createElement("input");i.type="file";i.accept="image/*";i.onchange=e=>{const f=e.target.files[0];if(!f)return;vibeImgToDataUrl(f,data=>{up(p=>({...p,vibeRefs:(p.vibeRefs||[]).map(r=>r.id===rid?{...r,d:data,encodedData:null,active:false,encoding:false}:r)}));sVibeConfirm(null);tw("이미지 교체됨 — 재인코딩 필요")})};i.click()};
 const[vibeConfirm,sVibeConfirm]=useState(null); // vibe id for replace confirm modal
 const[charLib,sCharLib]=useState(null); // character library list (null=closed)
+const[basePresetLib,sBasePresetLib]=useState(null); // base preset library list (null=closed)
 // Save character to preset library
 const saveCharToLib=async(ch)=>{await cpdbSave(ch.id,ch);tw("✓ \""+ch.name+"\" 라이브러리에 저장됨")};
 // Load character from preset library
@@ -2130,105 +2238,86 @@ const loadCharFromLib=(preset)=>{
 // Delete from library
 const delCharFromLib=async(id)=>{if(!confirm("라이브러리에서 삭제?"))return;await cpdbDel(id);const list=await cpdbList();sCharLib(list)};
 
-/* ── Col/Chunk ops ── */
+/* ── Col/Chunk ops (supports tg="b" | basePreset ID | char ID) ── */
+// Helpers: resolve tg → cols/chks, apply transforms to correct array
+const _tgChks=(p,tg)=>{
+  if(tg==="b")return p.baseChks;
+  const bp=(p.basePresets||[]).find(b=>b.id===tg);if(bp)return bp.chks||[];
+  return p.chars.find(c=>c.id===tg)?.chks||[];
+};
+const _tgCols=(p,tg)=>{
+  if(tg==="b")return p.baseCols;
+  const bp=(p.basePresets||[]).find(b=>b.id===tg);if(bp)return bp.cols||[];
+  return p.chars.find(c=>c.id===tg)?.cols||[];
+};
+const _mapItem=(p,tg,fn)=>{
+  // fn(item)=>item for items with {cols,chks} (chars & basePresets share this shape)
+  if(tg==="b")return p; // base uses baseCols/baseChks directly
+  const isBP=(p.basePresets||[]).some(b=>b.id===tg);
+  if(isBP)return{...p,basePresets:(p.basePresets||[]).map(b=>b.id===tg?fn(b):b)};
+  return{...p,chars:p.chars.map(c=>c.id===tg?fn(c):c)};
+};
+const _setCols=(p,tg,cols)=>{
+  if(tg==="b")return{...p,baseCols:cols};return _mapItem(p,tg,item=>({...item,cols}));
+};
+const _setChks=(p,tg,chks)=>{
+  if(tg==="b")return{...p,baseChks:chks};return _mapItem(p,tg,item=>({...item,chks}));
+};
+const _setColsChks=(p,tg,cols,chks)=>{
+  if(tg==="b")return{...p,baseCols:cols,baseChks:chks};return _mapItem(p,tg,item=>({...item,cols,chks}));
+};
+const _mapChks=(p,tg,fn)=>_setChks(p,tg,_tgChks(p,tg).map(fn));
+
 const aC=tg=>sMo({t:"ac",tg});
 const mC=(tg,id,d)=>up(p=>{
-  if(tg==="b"){const c=[...p.baseCols];const i=c.findIndex(x=>x.id===id);const j=i+d;if(j<0||j>=c.length)return p;[c[i],c[j]]=[c[j],c[i]];return{...p,baseCols:c}}
-  return{...p,chars:p.chars.map(ch=>{if(ch.id!==tg)return ch;const c=[...ch.cols];const i=c.findIndex(x=>x.id===id);const j=i+d;if(j<0||j>=c.length)return ch;[c[i],c[j]]=[c[j],c[i]];return{...ch,cols:c}})}});
+  const c=[..._tgCols(p,tg)];const i=c.findIndex(x=>x.id===id);const j=i+d;if(j<0||j>=c.length)return p;[c[i],c[j]]=[c[j],c[i]];return _setCols(p,tg,c)});
 const rC=(tg,col)=>sMo({t:"rc",tg,d:col});
-const dCC=(tg,id)=>up(p=>{
-  if(tg==="b")return{...p,baseCols:p.baseCols.filter(c=>c.id!==id),baseChks:p.baseChks.filter(c=>c.colId!==id)};
-  return{...p,chars:p.chars.map(ch=>ch.id!==tg?ch:{...ch,cols:ch.cols.filter(c=>c.id!==id),chks:ch.chks.filter(c=>c.colId!==id)})}});
-// Duplicate column with all its chunks
+const dCC=(tg,id)=>up(p=>_setColsChks(p,tg,_tgCols(p,tg).filter(c=>c.id!==id),_tgChks(p,tg).filter(c=>c.colId!==id)));
 const dupCol=(tg,colId)=>up(p=>{
-  const cols=tg==="b"?p.baseCols:p.chars.find(c=>c.id===tg)?.cols||[];
-  const chks=tg==="b"?p.baseChks:p.chars.find(c=>c.id===tg)?.chks||[];
+  const cols=_tgCols(p,tg);const chks=_tgChks(p,tg);
   const srcCol=cols.find(c=>c.id===colId);if(!srcCol)return p;
-  const newColId=G();
-  const newCol={...srcCol,id:newColId,name:srcCol.name+" (복제)"};
+  const newColId=G();const newCol={...srcCol,id:newColId,name:srcCol.name+" (복제)"};
   const srcChks=chks.filter(c=>c.colId===colId);
   const newChks=srcChks.map(c=>({...JSON.parse(JSON.stringify(c)),id:G(),colId:newColId,options:(c.options||[]).map(o=>({...o,id:G()})),selected:null}));
-  if(tg==="b")return{...p,baseCols:[...p.baseCols,newCol],baseChks:[...p.baseChks,...newChks]};
-  return{...p,chars:p.chars.map(ch=>ch.id!==tg?ch:{...ch,cols:[...ch.cols,newCol],chks:[...ch.chks,...newChks]})};
+  return _setColsChks(p,tg,[...cols,newCol],[...chks,...newChks]);
 });
-const aG=(tg,cid,si)=>sMo({t:"ag",tg,d:{cid,si}}); // add group chunk
-const eK=(tg,ch)=>sMo({t:"eg",tg,d:ch}); // edit group name
-const dK=(tg,id)=>up(p=>{if(tg==="b")return{...p,baseChks:p.baseChks.filter(c=>c.id!==id)};return{...p,chars:p.chars.map(ch=>ch.id!==tg?ch:{...ch,chks:ch.chks.filter(c=>c.id!==id)})}});
-// Duplicate chunk (deep clone with new IDs, placed right after original)
+const aG=(tg,cid,si)=>sMo({t:"ag",tg,d:{cid,si}});
+const eK=(tg,ch)=>sMo({t:"eg",tg,d:ch});
+const dK=(tg,id)=>up(p=>_setChks(p,tg,_tgChks(p,tg).filter(c=>c.id!==id)));
 const dupK=(tg,id)=>up(p=>{
-  const chks=tg==="b"?p.baseChks:p.chars.find(c=>c.id===tg)?.chks||[];
-  const src=chks.find(c=>c.id===id);if(!src)return p;
+  const chks=_tgChks(p,tg);const src=chks.find(c=>c.id===id);if(!src)return p;
   const nc={...JSON.parse(JSON.stringify(src)),id:G(),label:src.label+" (복제)",options:(src.options||[]).map(o=>({...o,id:G()})),selected:null,order:src.order+0.5};
-  if(tg==="b")return{...p,baseChks:[...p.baseChks,nc]};
-  return{...p,chars:p.chars.map(ch=>ch.id!==tg?ch:{...ch,chks:[...ch.chks,nc]})};
+  return _setChks(p,tg,[...chks,nc]);
 });
-// Group: select option (radio)
-const sG=(tg,chkId,optId)=>up(p=>{
-  const mapC=c=>c.id===chkId?{...c,selected:optId}:c;
-  if(tg==="b")return{...p,baseChks:p.baseChks.map(mapC)};
-  return{...p,chars:p.chars.map(ch=>ch.id!==tg?ch:{...ch,chks:ch.chks.map(mapC)})};
-});
-// Group: add option
+const sG=(tg,chkId,optId)=>up(p=>_mapChks(p,tg,c=>c.id===chkId?{...c,selected:optId}:c));
 const aO=(tg,chkId)=>sMo({t:"ao",tg,d:{chkId}});
-// Group: edit option
 const eO=(tg,chkId,opt)=>sMo({t:"eo",tg,d:{chkId,opt}});
-// Group: delete option
-const dO=(tg,chkId,optId)=>up(p=>{
-  const mapC=c=>{if(c.id!==chkId)return c;const opts=(c.options||[]).filter(o=>o.id!==optId);return{...c,options:opts,selected:c.selected===optId?null:c.selected}};
-  if(tg==="b")return{...p,baseChks:p.baseChks.map(mapC)};
-  return{...p,chars:p.chars.map(ch=>ch.id!==tg?ch:{...ch,chks:ch.chks.map(mapC)})};
-});
-// Move option within a chunk (d: -1=up, 1=down)
-const mO=(tg,chkId,optId,d)=>up(p=>{
-  const mapC=c=>{if(c.id!==chkId)return c;const opts=[...(c.options||[])];const idx=opts.findIndex(o=>o.id===optId);const nxt=idx+d;if(idx<0||nxt<0||nxt>=opts.length)return c;[opts[idx],opts[nxt]]=[opts[nxt],opts[idx]];return{...c,options:opts}};
-  if(tg==="b")return{...p,baseChks:p.baseChks.map(mapC)};
-  return{...p,chars:p.chars.map(ch=>ch.id!==tg?ch:{...ch,chks:ch.chks.map(mapC)})};
-});
-// Duplicate option within a chunk
-const dupO=(tg,chkId,optId)=>up(p=>{
-  const mapC=c=>{if(c.id!==chkId)return c;const src=(c.options||[]).find(o=>o.id===optId);if(!src)return c;return{...c,options:[...(c.options||[]),{...src,id:G(),name:src.name+" (복제)"}]}};
-  if(tg==="b")return{...p,baseChks:p.baseChks.map(mapC)};
-  return{...p,chars:p.chars.map(ch=>ch.id!==tg?ch:{...ch,chks:ch.chks.map(mapC)})};
-});
+const dO=(tg,chkId,optId)=>up(p=>_mapChks(p,tg,c=>{if(c.id!==chkId)return c;const opts=(c.options||[]).filter(o=>o.id!==optId);return{...c,options:opts,selected:c.selected===optId?null:c.selected}}));
+const mO=(tg,chkId,optId,d)=>up(p=>_mapChks(p,tg,c=>{if(c.id!==chkId)return c;const opts=[...(c.options||[])];const idx=opts.findIndex(o=>o.id===optId);const nxt=idx+d;if(idx<0||nxt<0||nxt>=opts.length)return c;[opts[idx],opts[nxt]]=[opts[nxt],opts[idx]];return{...c,options:opts}}));
+const dupO=(tg,chkId,optId)=>up(p=>_mapChks(p,tg,c=>{if(c.id!==chkId)return c;const src=(c.options||[]).find(o=>o.id===optId);if(!src)return c;return{...c,options:[...(c.options||[]),{...src,id:G(),name:src.name+" (복제)"}]}}));
 const mK=(tg,id,d)=>up(p=>{
-  const chks=tg==="b"?p.baseChks:p.chars.find(c=>c.id===tg)?.chks||[];
-  const ch=chks.find(c=>c.id===id);if(!ch)return p;
+  const chks=_tgChks(p,tg);const ch=chks.find(c=>c.id===id);if(!ch)return p;
   const si=chks.filter(c=>c.colId===ch.colId&&c.side===ch.side).sort((a,b)=>a.order-b.order);
   const idx=si.findIndex(c=>c.id===id);const nxt=idx+d;if(nxt<0||nxt>=si.length)return p;
   const sw=si[nxt].id;const mo2=ch.order;const so2=si[nxt].order;
   const u=chks.map(c=>{if(c.id===id)return{...c,order:so2};if(c.id===sw)return{...c,order:mo2};return c});
-  if(tg==="b")return{...p,baseChks:u};return{...p,chars:p.chars.map(ch2=>ch2.id!==tg?ch2:{...ch2,chks:u})}});
+  return _setChks(p,tg,u)});
 
 // Move chunk to different column/side/position (for drag & drop)
 const moveChunkTo=(srcTg,chunkId,dstTg,dstColId,dstSide,dstIdx)=>up(p=>{
-  // Get source chunk
-  const srcChks=srcTg==="b"?p.baseChks:p.chars.find(c=>c.id===srcTg)?.chks||[];
-  const chunk=srcChks.find(c=>c.id===chunkId);
-  if(!chunk)return p;
+  const srcChks=_tgChks(p,srcTg);const chunk=srcChks.find(c=>c.id===chunkId);if(!chunk)return p;
   // Remove from source
-  let np={...p};
-  if(srcTg==="b")np.baseChks=np.baseChks.filter(c=>c.id!==chunkId);
-  else np.chars=np.chars.map(ch=>ch.id!==srcTg?ch:{...ch,chks:ch.chks.filter(c=>c.id!==chunkId)});
+  let np=_setChks(p,srcTg,srcChks.filter(c=>c.id!==chunkId));
   // Prepare moved chunk
   const moved={...chunk,colId:dstColId,side:dstSide};
-  // Get destination chunks and recalculate orders
-  const dstChks=dstTg==="b"?np.baseChks:np.chars.find(c=>c.id===dstTg)?.chks||[];
+  const dstChks=_tgChks(np,dstTg);
   const siblings=dstChks.filter(c=>c.colId===dstColId&&c.side===dstSide).sort((a,b)=>a.order-b.order);
-  // Insert at position
   const pos=Math.max(0,Math.min(dstIdx,siblings.length));
-  siblings.splice(pos,0,moved);
-  siblings.forEach((c,i)=>c.order=i);
-  // Update moved chunk order
-  moved.order=pos;
-  // Recalculate all orders for this col+side
+  siblings.splice(pos,0,moved);siblings.forEach((c,i)=>c.order=i);moved.order=pos;
   const updated=dstChks.filter(c=>!(c.colId===dstColId&&c.side===dstSide));
-  updated.push(...siblings);
-  updated.push(moved);
-  // Deduplicate (moved is already in siblings)
+  updated.push(...siblings);updated.push(moved);
   const final=[...new Map(updated.map(c=>[c.id,c])).values()];
-  if(dstTg==="b")np.baseChks=final;
-  else np.chars=np.chars.map(ch=>ch.id!==dstTg?ch:{...ch,chks:final});
-  return np;
+  return _setChks(np,dstTg,final);
 });
 
 // Drag system for touch devices
@@ -2297,7 +2386,7 @@ const dragEndChunk=(e)=>{
     const dt=dr.dropTarget;
     const dstTg=dt.tg;const dstColId=dt.colId;const dstSide=dt.side;
     // Calculate destination index
-    const dstChks=(dstTg==="b"?D.baseChks:D.chars.find(c=>c.id===dstTg)?.chks||[]);
+    const dstChks=_tgChks(D,dstTg);
     const siblings=dstChks.filter(c=>c.colId===dstColId&&c.side===dstSide).sort((a,b)=>a.order-b.order);
     let dstIdx=siblings.length;
     if(dt.refId){
@@ -2311,16 +2400,12 @@ const dragEndChunk=(e)=>{
 
 /* ── Modal save ── */
 const hSv=()=>{if(!mo)return;const lb=lR.current?.value.trim();const tx=tR.current?.value.trim();const{t,tg,d}=mo;
-if(t==="ac"){if(!lb)return;up(p=>{if(tg==="b")return{...p,baseCols:[...p.baseCols,{id:G(),name:lb}]};return{...p,chars:p.chars.map(ch=>ch.id!==tg?ch:{...ch,cols:[...ch.cols,{id:G(),name:lb}]})}})}
-else if(t==="rc"){if(!lb)return;up(p=>{if(tg==="b")return{...p,baseCols:p.baseCols.map(c=>c.id===d.id?{...c,name:lb}:c)};return{...p,chars:p.chars.map(ch=>ch.id!==tg?ch:{...ch,cols:ch.cols.map(c=>c.id===d.id?{...c,name:lb}:c)})}})}
-// Add group chunk
-else if(t==="ag"){if(!lb)return;up(p=>{const chks=tg==="b"?p.baseChks:p.chars.find(c=>c.id===tg)?.chks||[];const gr=chks.filter(c=>c.colId===d.cid&&c.side===d.si);const mx=gr.length>0?Math.max(...gr.map(c=>c.order))+1:0;const nk={id:G(),colId:d.cid,side:d.si,label:lb,options:[],selected:null,order:mx};if(tg==="b")return{...p,baseChks:[...p.baseChks,nk]};return{...p,chars:p.chars.map(ch=>ch.id!==tg?ch:{...ch,chks:[...ch.chks,nk]})}})}
-// Edit group chunk name
-else if(t==="eg"){if(!lb)return;up(p=>{const mapC=c=>c.id===d.id?{...c,label:lb}:c;if(tg==="b")return{...p,baseChks:p.baseChks.map(mapC)};return{...p,chars:p.chars.map(ch=>ch.id!==tg?ch:{...ch,chks:ch.chks.map(mapC)})}})}
-// Add option to group
-else if(t==="ao"){if(!lb||!tx)return;up(p=>{const mapC=c=>c.id===d.chkId?{...c,options:[...(c.options||[]),{id:G(),name:lb,prompt:tx}]}:c;if(tg==="b")return{...p,baseChks:p.baseChks.map(mapC)};return{...p,chars:p.chars.map(ch=>ch.id!==tg?ch:{...ch,chks:ch.chks.map(mapC)})}})}
-// Edit option
-else if(t==="eo"){if(!lb||!tx)return;up(p=>{const mapC=c=>c.id===d.chkId?{...c,options:(c.options||[]).map(o=>o.id===d.opt.id?{...o,name:lb,prompt:tx}:o)}:c;if(tg==="b")return{...p,baseChks:p.baseChks.map(mapC)};return{...p,chars:p.chars.map(ch=>ch.id!==tg?ch:{...ch,chks:ch.chks.map(mapC)})}})}
+if(t==="ac"){if(!lb)return;up(p=>_setCols(p,tg,[..._tgCols(p,tg),{id:G(),name:lb}]))}
+else if(t==="rc"){if(!lb)return;up(p=>_setCols(p,tg,_tgCols(p,tg).map(c=>c.id===d.id?{...c,name:lb}:c)))}
+else if(t==="ag"){if(!lb)return;up(p=>{const chks=_tgChks(p,tg);const gr=chks.filter(c=>c.colId===d.cid&&c.side===d.si);const mx=gr.length>0?Math.max(...gr.map(c=>c.order))+1:0;const nk={id:G(),colId:d.cid,side:d.si,label:lb,options:[],selected:null,order:mx};return _setChks(p,tg,[...chks,nk])})}
+else if(t==="eg"){if(!lb)return;up(p=>_mapChks(p,tg,c=>c.id===d.id?{...c,label:lb}:c))}
+else if(t==="ao"){if(!lb||!tx)return;up(p=>_mapChks(p,tg,c=>c.id===d.chkId?{...c,options:[...(c.options||[]),{id:G(),name:lb,prompt:tx}]}:c))}
+else if(t==="eo"){if(!lb||!tx)return;up(p=>_mapChks(p,tg,c=>c.id===d.chkId?{...c,options:(c.options||[]).map(o=>o.id===d.opt.id?{...o,name:lb,prompt:tx}:o)}:c))}
 sMo(null)};
 
 /* ── Output helpers ── */
@@ -2399,24 +2484,60 @@ return(
 </div>
 </div>}
 
-{/* LEFT SIDEBAR - Characters */}
+{/* LEFT SIDEBAR - Base Presets + Characters */}
 <div className="sidebar" style={{width:pw.sidebar,minWidth:120,borderRight:"none",display:"flex",flexDirection:"column",flexShrink:0}}>
-<div style={{padding:"12px 12px 8px",display:"flex",alignItems:"center",gap:6}}>
-<span style={{fontSize:13,fontWeight:700,color:"#888"}}>캐릭터</span>
-<button onClick={oAC} style={{...Z.pB,fontSize:12,width:28,height:28,borderRadius:6}}>+</button>
-<button onClick={async()=>{const list=await cpdbList();sCharLib(list)}} style={{...Z.pB,fontSize:12,width:28,height:28,borderRadius:6,color:"#a88cff",borderColor:"rgba(120,90,255,.3)"}}>📚</button></div>
-<div className="scroll-y" style={{flex:1,padding:"0 8px 8px"}}>
+<div className="scroll-y" style={{flex:1,padding:"0 0 8px"}}>
+
+{/* ── Base Presets Section ── */}
+<div style={{borderBottom:"1px solid rgba(255,255,255,.06)"}}>
+<div onClick={()=>up(p=>({...p,collapsed:{...(p.collapsed||{}),__sbBP:!(p.collapsed||{}).__sbBP}}))} style={{padding:"10px 12px 6px",display:"flex",alignItems:"center",gap:6,cursor:"pointer"}}>
+<span style={{fontSize:11,color:"#785aff",transition:"transform .2s",transform:!(collapsed||{}).__sbBP?"rotate(90deg)":"rotate(0)"}}>▶</span>
+<span style={{fontSize:13,fontWeight:700,color:"#b095ff",flex:1}}>🎨 베이스 프리셋</span>
+<div style={{display:"flex",gap:3}} onClick={e=>e.stopPropagation()}>
+<button onClick={oABP} style={{...Z.pB,fontSize:11,width:24,height:24,borderRadius:5}}>+</button>
+<button onClick={async()=>{const list=await bpdbList();sBasePresetLib(list)}} style={{...Z.pB,fontSize:11,width:24,height:24,borderRadius:5,color:"#a88cff",borderColor:"rgba(120,90,255,.3)"}}>📚</button>
+</div></div>
+{!(collapsed||{}).__sbBP&&<div style={{padding:"0 8px 8px"}}>
+{basePresets.map(bp=>(
+<div key={bp.id} className={`cc${activeBasePresetIds.includes(bp.id)?" on":""}`} onClick={()=>toggleBasePreset(bp.id)}>
+<div style={{flex:1,minWidth:0}}>
+<div style={{fontSize:12,fontWeight:600,color:activeBasePresetIds.includes(bp.id)?"#c8b8ff":"#bbb",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{bp.name}</div>
+<div style={{fontSize:10,color:"#666"}}>{(bp.chks||[]).filter(c=>isChkActive(c)).length}청크</div></div>
+<div style={{display:"flex",gap:3,flexShrink:0}} onClick={e=>e.stopPropagation()}>
+<button onClick={()=>oEBP(bp)} style={{...Z.tB,width:26,height:26,fontSize:10,borderRadius:5}}>✎</button>
+<button onClick={()=>{dupBP(bp.id);tw("✓ 프리셋 복제됨")}} style={{...Z.tB,width:26,height:26,fontSize:10,borderRadius:5}} title="복제">📋</button>
+<button onClick={()=>saveBPToLib(bp)} style={{...Z.tB,width:26,height:26,fontSize:10,borderRadius:5,color:"#a88cff"}} title="라이브러리 저장">💾</button>
+<button onClick={()=>dBP(bp.id)} style={{...Z.tB,width:26,height:26,fontSize:10,color:"#f55",borderRadius:5}}>✕</button>
+</div></div>))}
+{basePresets.length===0&&<div style={{fontSize:10,color:"#444",padding:8,textAlign:"center"}}>프리셋을 추가하면<br/>그림체 전환이 빨라집니다</div>}
+</div>}
+</div>
+
+{/* ── Characters Section ── */}
+<div>
+<div onClick={()=>up(p=>({...p,collapsed:{...(p.collapsed||{}),__sbChar:!(p.collapsed||{}).__sbChar}}))} style={{padding:"10px 12px 6px",display:"flex",alignItems:"center",gap:6,cursor:"pointer"}}>
+<span style={{fontSize:11,color:"#c90",transition:"transform .2s",transform:!(collapsed||{}).__sbChar?"rotate(90deg)":"rotate(0)"}}>▶</span>
+<span style={{fontSize:13,fontWeight:700,color:"#ffb080",flex:1}}>👤 캐릭터</span>
+<div style={{display:"flex",gap:3}} onClick={e=>e.stopPropagation()}>
+<button onClick={oAC} style={{...Z.pB,fontSize:11,width:24,height:24,borderRadius:5}}>+</button>
+<button onClick={async()=>{const list=await cpdbList();sCharLib(list)}} style={{...Z.pB,fontSize:11,width:24,height:24,borderRadius:5,color:"#a88cff",borderColor:"rgba(120,90,255,.3)"}}>📚</button>
+</div></div>
+{!(collapsed||{}).__sbChar&&<div style={{padding:"0 8px 8px"}}>
 {chars.map(ch=>(
 <div key={ch.id} className={`cc${activeIds.includes(ch.id)?" on":""}`} onClick={()=>toggleChar(ch.id)}>
 <div style={{flex:1,minWidth:0}}>
 <div style={{fontSize:13,fontWeight:600,color:activeIds.includes(ch.id)?"#ffb080":"#bbb",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{ch.name}</div>
 <div style={{fontSize:10,color:"#666"}}>{ch.chks.filter(c=>isChkActive(c)).length}청크</div></div>
 <div style={{display:"flex",gap:3,flexShrink:0}} onClick={e=>e.stopPropagation()}>
-<button onClick={()=>oEC(ch)} style={{...Z.tB,width:28,height:28,fontSize:11,borderRadius:6}}>✎</button>
-<button onClick={()=>dupC(ch.id)} style={{...Z.tB,width:28,height:28,fontSize:11,borderRadius:6}} title="복제">📋</button>
-<button onClick={()=>saveCharToLib(ch)} style={{...Z.tB,width:28,height:28,fontSize:11,borderRadius:6,color:"#a88cff"}} title="라이브러리 저장">💾</button>
-<button onClick={()=>dC(ch.id)} style={{...Z.tB,width:28,height:28,fontSize:11,color:"#f55",borderRadius:6}}>✕</button></div></div>))}
-{chars.length===0&&<div style={{fontSize:10,color:"#444",padding:10,textAlign:"center"}}>캐릭터를 추가하세요</div>}</div>
+<button onClick={()=>oEC(ch)} style={{...Z.tB,width:26,height:26,fontSize:10,borderRadius:5}}>✎</button>
+<button onClick={()=>dupC(ch.id)} style={{...Z.tB,width:26,height:26,fontSize:10,borderRadius:5}} title="복제">📋</button>
+<button onClick={()=>saveCharToLib(ch)} style={{...Z.tB,width:26,height:26,fontSize:10,borderRadius:5,color:"#a88cff"}} title="라이브러리 저장">💾</button>
+<button onClick={()=>dC(ch.id)} style={{...Z.tB,width:26,height:26,fontSize:10,color:"#f55",borderRadius:5}}>✕</button></div></div>))}
+{chars.length===0&&<div style={{fontSize:10,color:"#444",padding:8,textAlign:"center"}}>캐릭터를 추가하세요</div>}
+</div>}
+</div>
+
+</div>
 </div>
 
 <Rz panel="sidebar"/>
@@ -2606,47 +2727,64 @@ return(
 }}>{dragMode?"⠿ 드래그 편집 ON":"⠿ 드래그 편집"}</button>
 </div>
 
-{/* Base columns group */}
+{/* Total token summary bar */}
 {(()=>{
-  const basePosTokens=countChkTokens(baseChks,"pos",isChkActive,getChkPrompt);
-  const baseNegTokens=countChkTokens(baseChks,"neg",isChkActive,getChkPrompt);
-  const allPosTokens=basePosTokens+activeChars.reduce((s,ch)=>s+countChkTokens(ch.chks,"pos",isChkActive,getChkPrompt),0);
-  const allNegTokens=baseNegTokens+activeChars.reduce((s,ch)=>s+countChkTokens(ch.chks,"neg",isChkActive,getChkPrompt),0);
+  const bpPosTokens=activeBasePresets.reduce((s,bp)=>s+countChkTokens(bp.chks||[],"pos",isChkActive,getChkPrompt),0);
+  const bpNegTokens=activeBasePresets.reduce((s,bp)=>s+countChkTokens(bp.chks||[],"neg",isChkActive,getChkPrompt),0);
+  const allPosTokens=bpPosTokens+activeChars.reduce((s,ch)=>s+countChkTokens(ch.chks,"pos",isChkActive,getChkPrompt),0);
+  const allNegTokens=bpNegTokens+activeChars.reduce((s,ch)=>s+countChkTokens(ch.chks,"neg",isChkActive,getChkPrompt),0);
   const maxTokens=512;
   const totalUsed=allPosTokens+allNegTokens;
   const pct=Math.min(totalUsed/maxTokens*100,100);
   const overLimit=totalUsed>maxTokens;
   const gaugeClass=overLimit?"tok-gauge-over":pct>80?"tok-gauge-warn":"tok-gauge-safe";
-  const isOpen=!(collapsed||{}).__base;
-  return(<div style={{marginBottom:10}}>
-    <div onClick={()=>up(p=>({...p,collapsed:{...(p.collapsed||{}),__base:!(p.collapsed||{}).__base}}))} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",background:"rgba(120,90,255,.06)",borderRadius:isOpen?"8px 8px 0 0":"8px",cursor:"pointer",border:"1px solid rgba(120,90,255,.12)",flexWrap:"wrap"}}>
+  return(<div style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",marginBottom:10,background:"rgba(120,90,255,.04)",borderRadius:8,border:"1px solid rgba(120,90,255,.08)",flexWrap:"wrap"}}>
+    <span style={{fontSize:12,fontWeight:700,color:"#888"}}>전체</span>
+    <span className="t5-badge" style={{background:t5Ready?"rgba(80,200,120,.12)":"rgba(255,255,255,.06)",color:t5Ready?"#5c8":"#666"}}>{t5Ready?"T5":"≈"}</span>
+    <span className="tok-label" style={{color:"#888"}}>{allPosTokens}+{allNegTokens}t</span>
+    <div className={`tok-gauge ${gaugeClass}`} style={{flex:1,maxWidth:200}} title={`${totalUsed}/${maxTokens} T5 tokens (전체 프롬프트)`}>
+      <div className="tok-gauge-fill" style={{width:`${pct}%`}}/>
+    </div>
+    <span className="tok-label" style={{color:overLimit?"#f55":pct>80?"#fa5":"#9988dd"}}>{totalUsed}/{maxTokens}</span>
+    <span style={{fontSize:10,color:"#555"}}>프리셋 {activeBasePresets.length} · 캐릭터 {activeChars.length}</span>
+  </div>);
+})()}
+
+{/* Active base preset column groups */}
+{activeBasePresets.map(bp=>{
+  const bpPosTokens=countChkTokens(bp.chks||[],"pos",isChkActive,getChkPrompt);
+  const bpNegTokens=countChkTokens(bp.chks||[],"neg",isChkActive,getChkPrompt);
+  const bpTotal=bpPosTokens+bpNegTokens;
+  const bpPct=Math.min(bpTotal/128*100,100);
+  const isOpen=!(collapsed||{})[bp.id];
+  return(<div key={bp.id} style={{marginBottom:10}}>
+    <div onClick={()=>up(p=>({...p,collapsed:{...(p.collapsed||{}),[bp.id]:!(p.collapsed||{})[bp.id]}}))} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",background:"rgba(120,90,255,.06)",borderRadius:isOpen?"8px 8px 0 0":"8px",cursor:"pointer",border:"1px solid rgba(120,90,255,.12)",flexWrap:"wrap"}}>
       <span style={{fontSize:12,color:"#785aff",transition:"transform .2s",transform:isOpen?"rotate(90deg)":"rotate(0)"}}>▶</span>
-      <span style={{fontSize:13,fontWeight:700,color:"#c8b8ff",flex:1,minWidth:40}}>베이스</span>
-      <span className="t5-badge" style={{background:t5Ready?"rgba(80,200,120,.12)":"rgba(255,255,255,.06)",color:t5Ready?"#5c8":"#666"}}>{t5Ready?"T5":"≈"}</span>
-      <span className="tok-label" style={{color:"#888"}}>{basePosTokens}+{baseNegTokens}t</span>
-      <div className={`tok-gauge ${gaugeClass}`} title={`${totalUsed}/${maxTokens} T5 tokens (전체 프롬프트)`}>
-        <div className="tok-gauge-fill" style={{width:`${pct}%`}}/>
+      <span style={{fontSize:11,padding:"1px 6px",borderRadius:4,background:"rgba(120,90,255,.12)",color:"#a88cff",fontWeight:700}}>🎨</span>
+      <span style={{fontSize:13,fontWeight:700,color:"#b095ff",flex:1,minWidth:40}}>{bp.name}</span>
+      <span className="tok-label" style={{color:"#888"}}>{bpPosTokens}+{bpNegTokens}t</span>
+      <div className={`tok-gauge ${bpPct>100?"tok-gauge-over":bpPct>80?"tok-gauge-warn":"tok-gauge-safe"}`} style={{maxWidth:80}} title={`프리셋: ${bpTotal} T5 tokens`}>
+        <div className="tok-gauge-fill" style={{width:`${bpPct}%`}}/>
       </div>
-      <span className="tok-label" style={{color:overLimit?"#f55":pct>80?"#fa5":"#9988dd"}}>{totalUsed}/{maxTokens}</span>
-      <button onClick={e=>{e.stopPropagation();aC("b")}} style={{...Z.pB,width:24,height:24,fontSize:12}}>+</button>
+      <button onClick={e=>{e.stopPropagation();aC(bp.id)}} style={{...Z.pB,width:24,height:24,fontSize:12}}>+</button>
     </div>
     {isOpen&&<div style={{border:"1px solid rgba(120,90,255,.08)",borderTop:"none",borderRadius:"0 0 8px 8px",padding:8}}>
       <div className="scroll-x" style={{display:"flex",gap:8,alignItems:"flex-start"}}>
-        {baseCols.map((col,i)=><CP key={col.id} col={col} ci={i} tt={baseCols.length} chks={baseChks} lb="b"
-          oMC={(id,d)=>mC("b",id,d)} oRC={c=>rC("b",c)} oDC={id=>dCC("b",id)}
-          oAG={(cid,s)=>aG("b",cid,s)} oEK={c=>eK("b",c)} oDK={id=>dK("b",id)} oMK={(id,d)=>mK("b",id,d)}
-          oSG={(chkId,optId)=>sG("b",chkId,optId)} oAO={chkId=>aO("b",chkId)} oEO={(chkId,opt)=>eO("b",chkId,opt)} oDO={(chkId,optId)=>dO("b",chkId,optId)} oMO={(chkId,optId,d)=>mO("b",chkId,optId,d)} oDupO={(chkId,optId)=>dupO("b",chkId,optId)} oDupK={id=>dupK("b",id)} oDupCol={id=>dupCol("b",id)} dragMode={dragMode} tg="b" onDragStart={dragStartChunk}/>)}
+        {(bp.cols||[]).map((col,i)=><CP key={col.id} col={col} ci={i} tt={(bp.cols||[]).length} chks={bp.chks||[]} lb="b"
+          oMC={(id,d)=>mC(bp.id,id,d)} oRC={c=>rC(bp.id,c)} oDC={id=>dCC(bp.id,id)}
+          oAG={(cid,s)=>aG(bp.id,cid,s)} oEK={c=>eK(bp.id,c)} oDK={id=>dK(bp.id,id)} oMK={(id,d)=>mK(bp.id,id,d)}
+          oSG={(chkId,optId)=>sG(bp.id,chkId,optId)} oAO={chkId=>aO(bp.id,chkId)} oEO={(chkId,opt)=>eO(bp.id,chkId,opt)} oDO={(chkId,optId)=>dO(bp.id,chkId,optId)} oMO={(chkId,optId,d)=>mO(bp.id,chkId,optId,d)} oDupO={(chkId,optId)=>dupO(bp.id,chkId,optId)} oDupK={id=>dupK(bp.id,id)} oDupCol={id=>dupCol(bp.id,id)} dragMode={dragMode} tg={bp.id} onDragStart={dragStartChunk}/>)}
       </div>
     </div>}
   </div>);
-})()}
+})}
 
 {/* Character column groups */}
 {activeChars.map(ch=>{
   const chPosTokens=countChkTokens(ch.chks,"pos",isChkActive,getChkPrompt);
   const chNegTokens=countChkTokens(ch.chks,"neg",isChkActive,getChkPrompt);
   const chTotal=chPosTokens+chNegTokens;
-  const chPct=Math.min(chTotal/128*100,100); // per-character gauge scaled to ~128
+  const chPct=Math.min(chTotal/128*100,100);
   const isOpen=!(collapsed||{})[ch.id];
   return(<div key={ch.id} style={{marginBottom:10}}>
     <div onClick={()=>up(p=>({...p,collapsed:{...(p.collapsed||{}),[ch.id]:!(p.collapsed||{})[ch.id]}}))} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",background:"rgba(255,140,60,.06)",borderRadius:isOpen?"8px 8px 0 0":"8px",cursor:"pointer",border:"1px solid rgba(255,140,60,.12)",flexWrap:"wrap"}}>
@@ -2670,7 +2808,7 @@ return(
   </div>);
 })}
 
-{activeChars.length===0&&<div style={{color:"#444",fontSize:12,padding:20,textAlign:"center"}}>← 캐릭터를 선택하면 프롬프트 열이 여기에 표시됩니다</div>}
+{activeChars.length===0&&activeBasePresets.length===0&&<div style={{color:"#444",fontSize:12,padding:20,textAlign:"center"}}>← 프리셋이나 캐릭터를 선택하면 프롬프트 열이 표시됩니다</div>}
 
 </div></div>}
 
@@ -3127,6 +3265,34 @@ return(
 <button onClick={()=>delCharFromLib(item.id)} style={{...Z.tB,fontSize:11,color:"#f55"}}>✕</button>
 </div>))}
 </div></Mod>
+
+{/* BASE PRESET LIBRARY MODAL */}
+<Mod open={!!basePresetLib} onClose={()=>sBasePresetLib(null)} title="📚 베이스 프리셋 라이브러리" w="min(500px,92vw)">
+<div style={{display:"flex",flexDirection:"column",gap:10}}>
+<div style={{display:"flex",gap:6,marginBottom:4}}>
+<button onClick={async()=>{await bpdbExportJSON();tw("✓ JSON 내보내기 완료")}} style={{...Z.pB,flex:1,padding:"8px 0",fontSize:11,color:"#8d8",borderColor:"rgba(80,200,100,.3)"}}>💾 JSON 내보내기</button>
+<button onClick={()=>{const i=document.createElement("input");i.type="file";i.accept=".json";i.onchange=e=>{const f=e.target.files[0];if(!f)return;bpdbImportJSON(f,async(err,cnt)=>{if(err){tw("⚠ 불러오기 실패: "+err);return}tw("✓ "+cnt+"개 프리셋 불러옴");const list=await bpdbList();sBasePresetLib(list)})};i.click()}} style={{...Z.pB,flex:1,padding:"8px 0",fontSize:11,color:"#a88cff",borderColor:"rgba(120,90,255,.3)"}}>📂 JSON 불러오기</button>
+</div>
+{basePresetLib&&basePresetLib.length===0&&<div style={{fontSize:12,color:"#555",textAlign:"center",padding:20}}>저장된 프리셋이 없습니다<br/><span style={{fontSize:10}}>프리셋 카드의 💾 버튼으로 저장하세요</span></div>}
+{basePresetLib&&basePresetLib.map(item=>(
+<div key={item.id} style={{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",background:"rgba(255,255,255,.03)",border:"1px solid rgba(255,255,255,.06)",borderRadius:8}}>
+<div style={{flex:1,minWidth:0}}>
+<div style={{fontSize:13,fontWeight:600,color:"#b095ff",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.data.name}</div>
+<div style={{fontSize:10,color:"#666"}}>{(item.data.cols||[]).length}열 · {(item.data.chks||[]).length}청크</div>
+</div>
+<button onClick={()=>{loadBPFromLib(item.data);sBasePresetLib(null)}} style={{...Z.pB,padding:"6px 10px",fontSize:14,color:"#8d8",borderColor:"rgba(80,200,100,.3)"}}>📂</button>
+<button onClick={()=>delBPFromLib(item.id)} style={{...Z.tB,fontSize:11,color:"#f55"}}>✕</button>
+</div>))}
+</div></Mod>
+
+{/* BASE PRESET ADD/EDIT MODAL */}
+<Mod open={!!bpMo} onClose={()=>sBpMo(null)} title={bpMo?.t==="a"?"베이스 프리셋 추가":"베이스 프리셋 수정"}>
+<div style={{display:"flex",flexDirection:"column",gap:12}}>
+<div><label style={Z.lb}>이름</label>
+<input ref={bpR} key={bpMo?.bp?.id||"nbp"} defaultValue={bpMo?.bp?.name||""} placeholder="예: 수채화풍, 셀화풍" style={Z.ip} autoFocus/>
+<label style={{...Z.lb,marginTop:6}}>메모</label>
+<RTA innerRef={bpNR} keyProp={"bp"+(bpMo?.bp?.id||"")} defaultValue={bpMo?.bp?.notes||""} placeholder="특징, 설명 등" rows={2} style={{...Z.ip,fontSize:11}}/></div>
+<button onClick={svBP} style={Z.sv}>{bpMo?.t==="a"?"추가":"저장"}</button></div></Mod>
 
 <Mod open={!!mo} onClose={()=>sMo(null)} title={mTi} w={isTx?"min(700px,94vw)":undefined}>
 <div style={{display:"flex",flexDirection:"column",gap:10}}>
