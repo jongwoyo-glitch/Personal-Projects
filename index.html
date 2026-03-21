@@ -1085,6 +1085,8 @@ const[wandTol,sWandTol]=useState(32); // wand tolerance 0-255
 const[wandContig,sWandContig]=useState(true); // contiguous selection
 const[selExpandAmt,sSelExpandAmt]=useState(3); // expand/shrink pixel amount
 const editSelPath=useRef(null); // cached Path2D for selection clipping
+const[spaceHeld,sSpaceHeld]=useState(false); // spacebar held for pan mode
+const spacePanRef=useRef(null); // {startX,startY,panX,panY} during space+drag
 const editToolNames={brush:"브러시",eraser:"지우개",eyedropper:"스포이드",blur:"블러",wand:"선택"};
 const[editShortcuts,sEditShortcuts]=useState(()=>{try{return JSON.parse(localStorage.getItem("nai_edit_shortcuts"))||{}}catch{return{}}});
 const[shortcutModal,sShortcutModal]=useState(null); // tool id being configured
@@ -1583,23 +1585,30 @@ const compositeEdit=()=>{
     for(let i=0;i<w*h;i++){if(editSel[i])dd[i*4+3]=0;}
     oCtx.putImageData(ovD,0,0);
     ctx.drawImage(ov,0,0);
-    // Marching ants border — draw 1px white outline around selection edge
+    // Marching ants border — dashed black/white outline around selection edge
     const bd=ctx.getImageData(0,0,w,h);
+    const antPhase=Math.floor(Date.now()/200)%6; // animate phase
     for(let y=0;y<h;y++){for(let x=0;x<w;x++){
       const idx=y*w+x;
       if(!editSel[idx])continue;
       // Check 4 neighbors — if any neighbor is unselected or out of bounds, this is an edge pixel
       const isEdge=(x===0||!editSel[idx-1])||(x===w-1||!editSel[idx+1])||(y===0||!editSel[idx-w])||(y===h-1||!editSel[idx+w]);
       if(isEdge){
-        // Animated dotted pattern: alternate black/white based on position+time
         const p=bd.data,pi=idx*4;
-        p[pi]=255;p[pi+1]=255;p[pi+2]=255;p[pi+3]=200;
+        const dash=((x+y+antPhase)%6)<3; // alternating black/white dashes
+        p[pi]=dash?255:0;p[pi+1]=dash?255:0;p[pi+2]=dash?255:0;p[pi+3]=230;
       }
     }}
     ctx.putImageData(bd,0,0);
   }
 };
 useEffect(()=>{if(editMode)compositeEdit()},[editMode,editLayers,editActiveLayer,editSel]);
+// Animate marching ants when selection exists
+useEffect(()=>{
+  if(!editMode||!editSel)return;
+  const iv=setInterval(()=>compositeEdit(),200);
+  return()=>clearInterval(iv);
+},[editMode,editSel,editLayers,editActiveLayer]);
 
 // Persist shortcuts
 useEffect(()=>{try{localStorage.setItem("nai_edit_shortcuts",JSON.stringify(editShortcuts))}catch{}},[editShortcuts]);
@@ -1610,6 +1619,7 @@ useEffect(()=>{
   const handler=(e)=>{
     if(e.target.tagName==="INPUT"||e.target.tagName==="TEXTAREA"||e.target.tagName==="SELECT")return;
     if(shortcutModal)return; // modal is capturing
+    if(e.code==="Space")return; // reserved for pan
     const key=e.key.toLowerCase();
     for(const[tool,k] of Object.entries(editShortcuts)){
       if(k.toLowerCase()===key){e.preventDefault();sEditTool(tool);return;}
@@ -1823,6 +1833,27 @@ const doEyedrop=(e)=>{
 const editStartDraw=(e)=>{
   // Right-click = eyedropper (desktop)
   if(e.button===2){e.preventDefault();doEyedrop(e);return}
+  // Spacebar + drag = pan (desktop)
+  if(spaceHeld&&!e.touches){
+    e.preventDefault();
+    const t=e;
+    spacePanRef.current={startX:t.clientX,startY:t.clientY,panX:editPan.x,panY:editPan.y};
+    const onMove=(ev)=>{
+      ev.preventDefault();
+      if(!spacePanRef.current)return;
+      const dx=ev.clientX-spacePanRef.current.startX;
+      const dy=ev.clientY-spacePanRef.current.startY;
+      sEditPan({x:spacePanRef.current.panX+dx,y:spacePanRef.current.panY+dy});
+    };
+    const onUp=()=>{
+      spacePanRef.current=null;
+      document.removeEventListener("mousemove",onMove);
+      document.removeEventListener("mouseup",onUp);
+    };
+    document.addEventListener("mousemove",onMove);
+    document.addEventListener("mouseup",onUp);
+    return;
+  }
   // Command/Ctrl + click = eyedropper (iPad keyboard / desktop)
   if((e.metaKey||e.ctrlKey)&&!e.altKey){
     e.preventDefault();doEyedrop(e);return;
@@ -2055,6 +2086,21 @@ useEffect(()=>{
   window.addEventListener("keydown",fn);
   return()=>window.removeEventListener("keydown",fn);
 },[editMode,se.width,se.height]);
+
+// Spacebar pan mode
+useEffect(()=>{
+  if(!editMode)return;
+  const down=(e)=>{
+    if(e.target.tagName==="INPUT"||e.target.tagName==="TEXTAREA"||e.target.tagName==="SELECT")return;
+    if(e.code==="Space"&&!e.repeat){e.preventDefault();sSpaceHeld(true)}
+  };
+  const up=(e)=>{
+    if(e.code==="Space"){e.preventDefault();sSpaceHeld(false);spacePanRef.current=null}
+  };
+  window.addEventListener("keydown",down);
+  window.addEventListener("keyup",up);
+  return()=>{window.removeEventListener("keydown",down);window.removeEventListener("keyup",up);sSpaceHeld(false)};
+},[editMode]);
 
 const editWheel=(e)=>{
   e.preventDefault();
@@ -3271,7 +3317,7 @@ return(
 {/* Opaque checkerboard layer — blocks the img, shows transparency */}
 <div style={{position:"absolute",inset:0,backgroundImage:"repeating-conic-gradient(#333 0% 25%, #555 0% 50%)",backgroundSize:"16px 16px"}}/>
 <canvas ref={editCanvasRef} style={{position:"absolute",inset:0,width:"100%",height:"100%",
-  cursor:editTool==="eyedropper"?"crosshair":editTool==="blur"?"cell":editTool==="bgremove"?"crosshair":editTool==="wand"?"crosshair":"default",touchAction:"none"}}
+  cursor:spaceHeld?"grab":editTool==="eyedropper"?"crosshair":editTool==="blur"?"cell":editTool==="bgremove"?"crosshair":editTool==="wand"?"crosshair":"default",touchAction:"none"}}
   onMouseDown={editStartDraw}
   onContextMenu={e=>e.preventDefault()}
   onTouchStart={editTouchStart} onTouchMove={editTouchMove} onTouchEnd={editTouchEnd}/>
