@@ -1397,6 +1397,18 @@ const initIpCanvas=useCallback(()=>{
 
 useEffect(()=>{if(ipEdit&&baseImg)setTimeout(initIpCanvas,100)},[ipEdit,baseImg,initIpCanvas]);
 
+// Resolution sync: when se.width/se.height changes, clear stale mask
+const prevResRef=useRef({w:se.width,h:se.height});
+useEffect(()=>{
+  if(prevResRef.current.w!==se.width||prevResRef.current.h!==se.height){
+    prevResRef.current={w:se.width,h:se.height};
+    // Clear stale mask — it was drawn at the old resolution
+    sIPMaskUrl(null);sIPMaskB64(null);
+    // Reinit if inpaint canvas is open
+    if(ipEdit)setTimeout(initIpCanvas,50);
+  }
+},[se.width,se.height]);
+
 // Inpaint: spacebar pan + Ctrl+Z
 useEffect(()=>{
   if(!ipEdit)return;
