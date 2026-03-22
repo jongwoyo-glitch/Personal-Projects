@@ -3700,7 +3700,7 @@ return(
 </div>
 {/* Canvas area */}
 <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",padding:10,minHeight:0,touchAction:"none",cursor:ipSpaceHeld?"grab":"default"}} onContextMenu={e=>e.preventDefault()} onWheel={ipWheel}>
-<div style={{position:"relative",maxWidth:"100%",maxHeight:"100%",aspectRatio:String(se.width/se.height),transform:`scale(${ipZoom}) translate(${ipPan.x/ipZoom}px,${ipPan.y/ipZoom}px)`,transformOrigin:"center center"}}>
+<div style={{position:"relative",maxWidth:"100%",maxHeight:"100%",aspectRatio:String(se.width/se.height),...(ipZoom!==1||ipPan.x||ipPan.y?{transform:`scale(${ipZoom}) translate(${ipPan.x/ipZoom}px,${ipPan.y/ipZoom}px)`,transformOrigin:"center center"}:{})}}>
 <img ref={ipImgRef} src={baseImg} style={{width:"100%",height:"100%",objectFit:"contain",display:"block",borderRadius:4,userSelect:"none",WebkitUserSelect:"none",WebkitTouchCallout:"none",pointerEvents:"none"}} draggable={false}/>
 <canvas ref={ipCanvasRef} style={{position:"absolute",inset:0,width:"100%",height:"100%",cursor:ipSpaceHeld?"grab":ipBrushPreview?"none":"crosshair",touchAction:"none",borderRadius:4,opacity:0.5,WebkitTouchCallout:"none",WebkitUserSelect:"none"}}
   onMouseDown={ipStartDraw} onMouseMove={ipHover} onMouseUp={ipStopDraw} onMouseLeave={ipHoverLeave}
