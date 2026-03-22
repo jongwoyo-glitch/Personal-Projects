@@ -827,8 +827,10 @@ const elRef=React.useRef(null);
 const toggleDD=()=>{
   if(!open&&elRef.current){
     const r=elRef.current.getBoundingClientRect();
-    const x=r.right+6;
-    const y=Math.min(r.top,window.innerHeight-340);
+    const ddW=280,ddH=340;
+    const spaceRight=window.innerWidth-r.right-6;
+    const x=spaceRight>=ddW?r.right+6:Math.max(4,r.left-ddW-6);
+    const y=Math.min(r.top,window.innerHeight-ddH);
     setDdPos({x,y});
   }
   setOpen(!open);
@@ -1069,6 +1071,7 @@ const ipHistoryRef=useRef([]);
 // Edit canvas state
 const[editMode,sEditMode]=useState(false); // false | "edit" | "bgremove"
 const[editSrc,sEditSrc]=useState(null); // source image for editor (genImg or history)
+const[editOrigin,sEditOrigin]=useState(null); // "gen" | "base" — where editor was opened from
 const[editBrush,sEditBrush]=useState(20);
 const[editColor,sEditColor]=useState("#ff0000");
 const[editTransparent,sEditTransparent]=useState(false); // transparent brush mode
@@ -2096,6 +2099,7 @@ const editWheel=(e)=>{
   sEditZoom(newZoom);
 };
 
+const editClose=()=>{sEditMode(false);sEditSrc(null);sEditOrigin(null);sEditSel(null);editSelPath.current=null};
 const editApply=()=>{
   if(!editImg)return;
   const out=document.createElement("canvas");out.width=se.width;out.height=se.height;
@@ -2103,8 +2107,13 @@ const editApply=()=>{
   drawAllLayers(ctx);
   out.toBlob(blob=>{
     const url=URL.createObjectURL(blob);
-    sBaseImg(url);sMode("img2img");sEditMode(false);sEditSrc(null);sEditSel(null);editSelPath.current=null;
-    tw("편집 적용 → Base Image 설정됨");
+    if(editOrigin==="base"){
+      sBaseImg(url);editClose();
+      tw("편집 적용 → Base Image 갱신됨");
+    }else{
+      sBaseImg(url);sMode("img2img");editClose();
+      tw("편집 적용 → Base Image 설정됨");
+    }
   },"image/png");
 };
 const editApplyToGen=()=>{
@@ -2114,7 +2123,7 @@ const editApplyToGen=()=>{
   drawAllLayers(ctx);
   out.toBlob(blob=>{
     const url=URL.createObjectURL(blob);
-    sGenImg(url);sEditMode(false);sEditSrc(null);sEditSel(null);editSelPath.current=null;
+    sGenImg(url);editClose();
     tw("편집 적용 → 미리보기 설정됨");
   },"image/png");
 };
@@ -2547,7 +2556,7 @@ return(
 <button onClick={()=>{sBaseDrop(false);
   const c=document.createElement("canvas");c.width=se.width;c.height=se.height;
   const ctx=c.getContext("2d");ctx.fillStyle="#ffffff";ctx.fillRect(0,0,c.width,c.height);
-  sEditSrc(c.toDataURL("image/png"));sEditMode("edit");
+  sEditOrigin("gen");sEditSrc(c.toDataURL("image/png"));sEditMode("edit");
 }} className="base-drop-item" style={{display:"block",width:"100%",padding:"10px 14px",border:"none",background:"transparent",color:"#5cb8ff",fontSize:12,fontWeight:600,cursor:"pointer",textAlign:"left"}}>🖌 캔버스 작성 <span style={{fontSize:9,color:"#666",fontWeight:400}}>({se.width}×{se.height})</span></button>
 </div>}
 {baseDrop&&<div onClick={()=>sBaseDrop(false)} style={{position:"fixed",inset:0,zIndex:998}}/>}
@@ -2658,7 +2667,8 @@ return(
 
 {/* Base Image section */}
 {hasBase&&<div style={{flexShrink:0}}>
-<div style={{padding:"8px 10px",borderBottom:"1px solid rgba(120,90,255,.1)",display:"flex",alignItems:"center",gap:6}}>
+<div style={{padding:"8px 10px",borderBottom:"1px solid rgba(120,90,255,.1)",display:"flex",flexDirection:"column",gap:6}}>
+<div style={{display:"flex",alignItems:"center",gap:6}}>
 <span style={{fontSize:11,fontWeight:700,color:"#b095ff",flexShrink:0}}>🖼 Base</span>
 <div style={{display:"flex",borderRadius:5,overflow:"hidden",border:"1px solid rgba(255,255,255,.1)",flexShrink:0}}>
 <button onClick={()=>{sMode("img2img");sIPMaskUrl(null);sIPMaskB64(null)}} style={{fontSize:9,fontWeight:600,padding:"3px 8px",border:"none",cursor:"pointer",
@@ -2667,7 +2677,10 @@ return(
   background:mode==="inpaint"?"rgba(255,140,60,.25)":"transparent",color:mode==="inpaint"?"#fa5":"#666"}}>인페인트</button>
 </div>
 <div style={{flex:1}}/>
-<div style={{display:"flex",gap:4}}>
+</div>
+<div style={{display:"flex",gap:4,justifyContent:"flex-end"}}>
+<button onClick={()=>{sEditOrigin("base");sEditSrc(baseImg);sEditMode("edit")}} style={{...Z.tB,width:22,height:22,fontSize:10,color:"#5cb8ff"}} title="편집">✏️</button>
+<button onClick={()=>{sEditOrigin("base");sEditSrc(baseImg);sEditTool("bgremove");sEditMode("bgremove")}} style={{...Z.tB,width:22,height:22,fontSize:10,color:"#8d8"}} title="배경 제거">🔲</button>
 <button onClick={uploadBaseImg} style={{...Z.tB,width:22,height:22,fontSize:10,color:"#b095ff"}} title="다른 이미지 로드">📁</button>
 <button onClick={()=>{sMode("txt2img");sBaseImg(null);sIPMaskUrl(null);sIPMaskB64(null);tw("txt2img 모드")}} style={{...Z.tB,width:22,height:22,fontSize:10,color:"#f55"}}>✕</button>
 </div></div>
@@ -2789,8 +2802,8 @@ return(
 <button onClick={downloadImg} style={{...Z.hB,fontSize:10,padding:"5px 10px"}}>💾 저장</button>
 <button onClick={()=>{sBaseImg(genImg);sMode("img2img");tw("Base Image 설정됨")}} style={{...Z.hB,fontSize:10,padding:"5px 10px",background:mode==="img2img"?"rgba(120,90,255,.25)":"transparent",borderColor:mode==="img2img"?"rgba(120,90,255,.4)":"rgba(255,255,255,.1)",color:mode==="img2img"?"#b095ff":"#888"}}>🖼 Base</button>
 <button onClick={uploadBaseImg} style={{...Z.hB,fontSize:10,padding:"5px 10px",color:"#b095ff"}}>📁 업로드</button>
-<button onClick={()=>{sEditSrc(genImg);sEditMode("edit")}} style={{...Z.hB,fontSize:10,padding:"5px 10px",color:"#5cb8ff"}}>✏️ 편집</button>
-<button onClick={()=>{sEditSrc(genImg);sEditTool("bgremove");sEditMode("bgremove")}} style={{...Z.hB,fontSize:10,padding:"5px 10px",color:"#8d8"}}>🔲 배경제거</button>
+<button onClick={()=>{sEditOrigin("gen");sEditSrc(genImg);sEditMode("edit")}} style={{...Z.hB,fontSize:10,padding:"5px 10px",color:"#5cb8ff"}}>✏️ 편집</button>
+<button onClick={()=>{sEditOrigin("gen");sEditSrc(genImg);sEditTool("bgremove");sEditMode("bgremove")}} style={{...Z.hB,fontSize:10,padding:"5px 10px",color:"#8d8"}}>🔲 배경제거</button>
 <button onClick={()=>{sBaseImg(genImg);sMode("inpaint");sIPMaskUrl(null);sIPMaskB64(null);sIPE(true)}} style={{...Z.hB,fontSize:10,padding:"5px 10px",background:mode==="inpaint"?"rgba(255,140,60,.25)":"transparent",color:mode==="inpaint"?"#fa5":"#888"}}>🖌 인페인트</button>
 {mode==="inpaint"&&ipMaskUrl&&<button onClick={()=>sIPE(true)} style={{...Z.hB,fontSize:10,padding:"5px 10px",color:"#c8b8ff"}}>✏️ 마스크 수정</button>}
 {mode!=="txt2img"&&<button onClick={()=>{sMode("txt2img");sBaseImg(null);sIPMaskUrl(null);sIPMaskB64(null)}} style={{...Z.hB,fontSize:10,padding:"5px 10px",color:"#f55"}}>✕</button>}
@@ -2996,11 +3009,11 @@ return(
 <div style={{padding:"6px 12px",fontSize:9,color:"#555",borderBottom:"1px solid rgba(255,255,255,.06)",fontWeight:600}}>편집</div>
 <button onClick={async()=>{sHistMenu(null);
   const url=await loadImg();
-  if(url){sEditSrc(url);sEditMode("edit");tw("이미지 편집")}
+  if(url){sEditOrigin("gen");sEditSrc(url);sEditMode("edit");tw("이미지 편집")}
 }} style={{width:"100%",background:"none",border:"none",borderBottom:"1px solid rgba(255,255,255,.04)",color:"#5cb8ff",fontSize:11,padding:"8px 12px",cursor:"pointer",textAlign:"left",fontFamily:"inherit"}}>✏️ 이미지 편집</button>
 <button onClick={async()=>{sHistMenu(null);
   const url=await loadImg();
-  if(url){sEditSrc(url);sEditTool("bgremove");sEditMode("bgremove");tw("배경 제거")}
+  if(url){sEditOrigin("gen");sEditSrc(url);sEditTool("bgremove");sEditMode("bgremove");tw("배경 제거")}
 }} style={{width:"100%",background:"none",border:"none",borderBottom:"1px solid rgba(255,255,255,.06)",color:"#8d8",fontSize:11,padding:"8px 12px",cursor:"pointer",textAlign:"left",fontFamily:"inherit"}}>🔲 배경 제거</button>
 {/* 삭제 */}
 <button onClick={()=>{sHistMenu(null);idbDel(h.id);sHistory(p=>p.filter(x=>x.id!==h.id))}} style={{width:"100%",background:"none",border:"none",color:"#f55",fontSize:11,padding:"8px 12px",cursor:"pointer",textAlign:"left",fontFamily:"inherit"}}>🗑 삭제</button>
@@ -3136,9 +3149,9 @@ return(
   borderColor:pencilOnly?"rgba(255,180,60,.4)":"rgba(255,255,255,.1)",
   color:pencilOnly?"#fa5":"#666"}} title="Apple Pencil 전용 모드">{pencilOnly?"✏️ 펜슬":"👆 터치"}</button>
 <div style={{flex:1}}/>
-<button onClick={editApply} className="gen-btn" style={{fontSize:12,padding:"6px 14px",minHeight:44,background:"linear-gradient(135deg,#3388ff,#5cb8ff)"}}>✅ → Base</button>
+<button onClick={editApply} className="gen-btn" style={{fontSize:12,padding:"6px 14px",minHeight:44,background:"linear-gradient(135deg,#3388ff,#5cb8ff)"}}>{editOrigin==="base"?"✅ 적용":"✅ → Base"}</button>
 <button onClick={editApplyToGen} style={{...Z.hB,fontSize:12,padding:"6px 14px",minHeight:44,color:"#b095ff",borderColor:"rgba(120,90,255,.4)",background:"rgba(120,90,255,.12)"}}>→ 미리보기</button>
-<button onClick={()=>{sEditMode(false);sEditSrc(null);sEditSel(null);editSelPath.current=null}} style={{...Z.hB,fontSize:14,padding:"6px 12px",minHeight:44,color:"#f66"}}>✕</button>
+<button onClick={editClose} style={{...Z.hB,fontSize:14,padding:"6px 12px",minHeight:44,color:"#f66"}}>✕</button>
 </div>}
 
 {/* Top Bar - BG Remove Mode (options + actions) */}
@@ -3175,7 +3188,7 @@ return(
   if(wb){await saveBlob(wb,"NAI_bgremoved_"+Date.now()+".webp");tw("WebP 내보내기 완료")}
   else{const pb=await new Promise(r=>out.toBlob(r,"image/png"));await saveBlob(pb,"NAI_bgremoved_"+Date.now()+".png");tw("PNG 내보내기 (WebP 실패)")}
 }} style={{...Z.hB,fontSize:11,padding:"5px 12px",minHeight:44,color:"#5cb8ff"}}>💾 WebP</button>
-<button onClick={()=>{sEditMode(false);sEditSrc(null);sEditSel(null);editSelPath.current=null}} style={{...Z.hB,fontSize:14,padding:"6px 12px",minHeight:44,color:"#f66"}}>✕</button>
+<button onClick={editClose} style={{...Z.hB,fontSize:14,padding:"6px 12px",minHeight:44,color:"#f66"}}>✕</button>
 </div>}
 {/* Main area: canvas + layers panel */}
 <div style={{flex:1,display:"flex",overflow:"hidden",minHeight:0}}>
