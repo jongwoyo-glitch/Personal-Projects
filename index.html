@@ -3699,16 +3699,15 @@ return(
   color:ipErase?"#f66":"#888"}}>🧹</button>
 </div>
 {/* Canvas area */}
-<div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",padding:10,minHeight:0,touchAction:"none",cursor:ipSpaceHeld?"grab":"default"}} onContextMenu={e=>e.preventDefault()} onWheel={ipWheel}>
+<div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",padding:10,minHeight:0,touchAction:"none",cursor:ipSpaceHeld?"grab":"default",position:"relative"}} onContextMenu={e=>e.preventDefault()} onWheel={ipWheel}>
 <div style={{position:"relative",maxWidth:"100%",maxHeight:"100%",aspectRatio:String(se.width/se.height),...(ipZoom!==1||ipPan.x||ipPan.y?{transform:`scale(${ipZoom}) translate(${ipPan.x/ipZoom}px,${ipPan.y/ipZoom}px)`,transformOrigin:"center center"}:{})}}>
 <img ref={ipImgRef} src={baseImg} style={{width:"100%",height:"100%",objectFit:"contain",display:"block",borderRadius:4,userSelect:"none",WebkitUserSelect:"none",WebkitTouchCallout:"none",pointerEvents:"none"}} draggable={false}/>
-<canvas ref={ipCanvasRef} style={{position:"absolute",inset:0,width:"100%",height:"100%",cursor:ipSpaceHeld?"grab":ipBrushPreview?"none":"crosshair",touchAction:"none",borderRadius:4,opacity:0.5,WebkitTouchCallout:"none",WebkitUserSelect:"none"}}
-  onMouseDown={ipStartDraw} onMouseMove={ipHover} onMouseUp={ipStopDraw} onMouseLeave={ipHoverLeave}
+<canvas ref={ipCanvasRef} style={{position:"absolute",inset:0,width:"100%",height:"100%",cursor:ipSpaceHeld?"grab":"crosshair",touchAction:"none",borderRadius:4,opacity:0.5,WebkitTouchCallout:"none",WebkitUserSelect:"none"}}
+  onMouseDown={ipStartDraw} onMouseMove={ipDraw} onMouseUp={ipStopDraw} onMouseLeave={ipStopDraw}
   onTouchStart={ipStartDraw} onTouchMove={ipDraw} onTouchEnd={ipStopDraw}
   onContextMenu={e=>e.preventDefault()}/>
 {ipZoom!==1&&<div style={{position:"absolute",top:4,right:4,fontSize:9,padding:"2px 6px",borderRadius:3,background:"rgba(0,0,0,.6)",color:"#aaa",pointerEvents:"none"}}>{Math.round(ipZoom*100)}%</div>}
 </div>
-{ipBrushPreview&&<div style={{position:"absolute",left:ipBrushPreview.x-ipBrushPreview.size/2*ipZoom,top:ipBrushPreview.y-ipBrushPreview.size/2*ipZoom,width:ipBrushPreview.size*ipZoom,height:ipBrushPreview.size*ipZoom,borderRadius:"50%",border:"2px solid rgba(255,255,255,.7)",pointerEvents:"none",boxShadow:"0 0 0 1px rgba(0,0,0,.4)",zIndex:10}}/>}
 </div>
 </div>
 </div>}
