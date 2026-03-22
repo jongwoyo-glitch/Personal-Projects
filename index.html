@@ -1324,6 +1324,7 @@ const uploadBaseImg=()=>{
       const iw=img.naturalWidth,ih=img.naturalHeight;
       if(iw&&ih&&(iw!==se.width||ih!==se.height)){
         up(p=>({...p,settings:{...p.settings,width:iw,height:ih}}));
+        sIPMaskUrl(null);sIPMaskB64(null);sIPE(false);
         tw(`기준 해상도가 ${iw}×${ih}로 변경되었습니다.`);
       }else{
         tw("이미지 로드됨 → img2img 모드");
@@ -1345,6 +1346,7 @@ const handleDrop=(e)=>{
     const iw=img.naturalWidth,ih=img.naturalHeight;
     if(iw&&ih&&(iw!==se.width||ih!==se.height)){
       up(p=>({...p,settings:{...p.settings,width:iw,height:ih}}));
+      sIPMaskUrl(null);sIPMaskB64(null);sIPE(false);
       tw(`기준 해상도가 ${iw}×${ih}로 변경되었습니다.`);
     }else{
       tw("이미지 드롭 → img2img 모드");
@@ -1396,18 +1398,6 @@ const initIpCanvas=useCallback(()=>{
 },[se.width,se.height,ipMaskB64]);
 
 useEffect(()=>{if(ipEdit&&baseImg)setTimeout(initIpCanvas,100)},[ipEdit,baseImg,initIpCanvas]);
-
-// Resolution sync: when se.width/se.height changes, clear stale mask
-const prevResRef=useRef({w:se.width,h:se.height});
-useEffect(()=>{
-  if(prevResRef.current.w!==se.width||prevResRef.current.h!==se.height){
-    prevResRef.current={w:se.width,h:se.height};
-    // Clear stale mask — it was drawn at the old resolution
-    sIPMaskUrl(null);sIPMaskB64(null);
-    // Reinit if inpaint canvas is open
-    if(ipEdit)setTimeout(initIpCanvas,50);
-  }
-},[se.width,se.height]);
 
 // Inpaint: spacebar pan + Ctrl+Z
 useEffect(()=>{
