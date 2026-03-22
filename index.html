@@ -1099,6 +1099,8 @@ const[selBrushSize,sSelBrushSize]=useState(30); // brush selection size
 const lassoPoints=useRef([]); // [{x,y}] for lasso
 const selDrawing=useRef(false); // brush selection drawing state
 const selLastPos=useRef(null);
+const[selMoving,sSelMoving]=useState(false); // move mode active
+const selMoveData=useRef(null); // {imgData, mask, startX, startY, offsetX, offsetY} during move drag
 const[selExpandAmt,sSelExpandAmt]=useState(3); // expand/shrink pixel amount
 const editSelPath=useRef(null); // cached Path2D for selection clipping
 const spaceHeldRef=useRef(false); // spacebar held (immediate read for event handlers)
@@ -1947,6 +1949,112 @@ const invertSelection=()=>{
   sEditSel(mask);rebuildSelPath(mask);
 };
 
+// Move selection: extract selected pixels, allow drag to reposition
+const startSelMove=(startX,startY)=>{
+  if(!editSel)return false;
+  const acv=getActiveCanvas();if(!acv)return false;
+  editSaveSnap();
+  const w=se.width,h=se.height;
+  const ctx=acv.getContext("2d");
+  const imgd=ctx.getImageData(0,0,w,h);
+  const dd=imgd.data;
+  // Extract selected pixels and clear them from layer
+  const extracted=new Uint8ClampedArray(w*h*4); // RGBA of selected pixels only
+  for(let i=0;i<w*h;i++){
+    if(editSel[i]){
+      const p=i*4;
+      extracted[p]=dd[p];extracted[p+1]=dd[p+1];extracted[p+2]=dd[p+2];extracted[p+3]=dd[p+3];
+      dd[p]=0;dd[p+1]=0;dd[p+2]=0;dd[p+3]=0; // clear from layer
+    }
+  }
+  ctx.putImageData(imgd,0,0);
+  selMoveData.current={extracted,mask:new Uint8Array(editSel),w,h,startX,startY,offsetX:0,offsetY:0};
+  return true;
+};
+
+const renderMovePreview=()=>{
+  if(!selMoveData.current)return;
+  const{extracted,w,h,offsetX,offsetY}=selMoveData.current;
+  // Draw extracted pixels onto a temp canvas with offset
+  const tmp=document.createElement("canvas");tmp.width=w;tmp.height=h;
+  const tctx=tmp.getContext("2d");
+  const srcData=new ImageData(new Uint8ClampedArray(extracted),w,h);
+  // We need to shift the pixels — use a second canvas
+  const src=document.createElement("canvas");src.width=w;src.height=h;
+  src.getContext("2d").putImageData(srcData,0,0);
+  tctx.drawImage(src,Math.round(offsetX),Math.round(offsetY));
+  // Draw over the display canvas
+  const cv=editCanvasRef.current;if(!cv)return;
+  const ctx=cv.getContext("2d");
+  // Re-composite base layers first
+  cv.width=w;cv.height=h;ctx.clearRect(0,0,w,h);
+  drawAllLayers(ctx);
+  // Draw moved pixels on top
+  ctx.drawImage(tmp,0,0);
+  // Draw selection overlay at new position
+  const newMask=new Uint8Array(w*h);
+  const{mask}=selMoveData.current;
+  const ox=Math.round(offsetX),oy=Math.round(offsetY);
+  for(let y=0;y<h;y++){for(let x=0;x<w;x++){
+    const si=y*w+x;
+    if(!mask[si])continue;
+    const nx=x+ox,ny=y+oy;
+    if(nx>=0&&nx<w&&ny>=0&&ny<h)newMask[ny*w+nx]=1;
+  }}
+  // Darken non-selected
+  const ov=document.createElement("canvas");ov.width=w;ov.height=h;
+  const oCtx=ov.getContext("2d");
+  oCtx.fillStyle="rgba(0,0,0,0.35)";oCtx.fillRect(0,0,w,h);
+  const ovD=oCtx.getImageData(0,0,w,h);
+  for(let i=0;i<w*h;i++){if(newMask[i])ovD.data[i*4+3]=0}
+  oCtx.putImageData(ovD,0,0);
+  ctx.drawImage(ov,0,0);
+};
+
+const commitSelMove=()=>{
+  if(!selMoveData.current)return;
+  const{extracted,mask,w,h,offsetX,offsetY}=selMoveData.current;
+  const ox=Math.round(offsetX),oy=Math.round(offsetY);
+  const acv=getActiveCanvas();
+  if(acv){
+    const ctx=acv.getContext("2d");
+    // Draw extracted pixels at offset position
+    const srcData=new ImageData(new Uint8ClampedArray(extracted),w,h);
+    const src=document.createElement("canvas");src.width=w;src.height=h;
+    src.getContext("2d").putImageData(srcData,0,0);
+    ctx.drawImage(src,ox,oy);
+  }
+  // Update selection mask to new position
+  const newMask=new Uint8Array(w*h);
+  for(let y=0;y<h;y++){for(let x=0;x<w;x++){
+    if(!mask[y*w+x])continue;
+    const nx=x+ox,ny=y+oy;
+    if(nx>=0&&nx<w&&ny>=0&&ny<h)newMask[ny*w+nx]=1;
+  }}
+  sEditSel(newMask);rebuildSelPath(newMask);
+  selMoveData.current=null;
+  sSelMoving(false);
+  compositeEdit();
+  tw("선택 영역 이동 완료");
+};
+
+const cancelSelMove=()=>{
+  if(!selMoveData.current)return;
+  // Restore: put extracted pixels back at original position
+  const{extracted,w,h}=selMoveData.current;
+  const acv=getActiveCanvas();
+  if(acv){
+    const ctx=acv.getContext("2d");
+    const srcData=new ImageData(new Uint8ClampedArray(extracted),w,h);
+    const src=document.createElement("canvas");src.width=w;src.height=h;
+    src.getContext("2d").putImageData(srcData,0,0);
+    ctx.drawImage(src,0,0);
+  }
+  selMoveData.current=null;
+  sSelMoving(false);
+  compositeEdit();
+};
+
 // Fill selection with current color (or clear if transparent)
 const fillSelection=()=>{
   if(!editSel)return;
@@ -2068,6 +2176,32 @@ const editStartDraw=(e)=>{
   }
   if(editTool==="wand"){
     const{x,y}=getEditXY(e);
+    // Move mode: drag selected pixels
+    if(selMoving&&editSel){
+      if(startSelMove(x,y)){
+        const onMove=(ev)=>{
+          ev.preventDefault();
+          const p=getEditXY(ev);
+          if(selMoveData.current){
+            selMoveData.current.offsetX=p.x-selMoveData.current.startX;
+            selMoveData.current.offsetY=p.y-selMoveData.current.startY;
+            renderMovePreview();
+          }
+        };
+        const onUp=()=>{
+          commitSelMove();
+          document.removeEventListener("mousemove",onMove);
+          document.removeEventListener("mouseup",onUp);
+          document.removeEventListener("touchmove",onMove);
+          document.removeEventListener("touchend",onUp);
+        };
+        document.addEventListener("mousemove",onMove);
+        document.addEventListener("mouseup",onUp);
+        document.addEventListener("touchmove",onMove,{passive:false});
+        document.addEventListener("touchend",onUp);
+      }
+      return;
+    }
     const mode=e.shiftKey?"add":e.altKey?"subtract":"replace";
     if(wandSub==="color"){
       doWandSelect(x,y,mode);
@@ -2374,7 +2508,7 @@ const editWheel=(e)=>{
   sEditZoom(newZoom);
 };
 
-const editClose=()=>{sEditMode(false);sEditSrc(null);sEditOrigin(null);sEditSel(null);editSelPath.current=null};
+const editClose=()=>{sEditMode(false);sEditSrc(null);sEditOrigin(null);sEditSel(null);editSelPath.current=null;sSelMoving(false);selMoveData.current=null};
 const editApply=()=>{
   if(!editImg)return;
   const out=document.createElement("canvas");out.width=se.width;out.height=se.height;
@@ -3439,10 +3573,14 @@ return(
 <button onClick={()=>expandSelection(selExpandAmt)} disabled={!editSel} style={{...Z.hB,fontSize:9,padding:"4px 7px",minHeight:32,color:editSel?"#5ce":"#555",borderColor:editSel?"rgba(90,200,255,.3)":"rgba(255,255,255,.06)"}} title={"선택 영역 "+selExpandAmt+"px 확장"}>⊕ 확장</button>
 <button onClick={()=>shrinkSelection(selExpandAmt)} disabled={!editSel} style={{...Z.hB,fontSize:9,padding:"4px 7px",minHeight:32,color:editSel?"#fa5":"#555",borderColor:editSel?"rgba(255,180,60,.3)":"rgba(255,255,255,.06)"}} title={"선택 영역 "+selExpandAmt+"px 축소"}>⊖ 축소</button>
 <button onClick={invertSelection} disabled={!editSel} style={{...Z.hB,fontSize:9,padding:"4px 7px",minHeight:32,color:editSel?"#c9f":"#555",borderColor:editSel?"rgba(180,120,255,.3)":"rgba(255,255,255,.06)"}} title="선택 반전">◑ 반전</button>
+<button onClick={()=>{if(selMoving){cancelSelMove()}else{sSelMoving(true)}}} disabled={!editSel} style={{...Z.hB,fontSize:9,padding:"4px 7px",minHeight:32,
+  background:selMoving?"rgba(255,200,60,.2)":"transparent",
+  color:selMoving?"#fa5":editSel?"#da5":"#555",
+  borderColor:selMoving?"rgba(255,200,60,.4)":editSel?"rgba(255,200,60,.3)":"rgba(255,255,255,.06)"}} title={selMoving?"이동 취소":"선택 영역 드래그로 이동"}>{selMoving?"✥ 취소":"✥ 이동"}</button>
 <div style={{width:1,height:20,background:"rgba(255,255,255,.08)"}}/>
 <button onClick={fillSelection} style={{...Z.hB,fontSize:11,padding:"4px 10px",minHeight:32,color:"#8d8",borderColor:"rgba(100,200,100,.3)"}} title="선택 영역 채우기">🪣</button>
-<button onClick={()=>{sEditSel(null);editSelPath.current=null}} style={{...Z.hB,fontSize:9,padding:"4px 8px",minHeight:32,color:"#f88",borderColor:"rgba(255,100,100,.3)"}} title="선택 해제">{editSel?"✕ 해제":"—"}</button>
-<button onClick={()=>{sEditSel(null);editSelPath.current=null;sEditTool(prevEditTool.current||"brush")}} style={{...Z.hB,fontSize:10,padding:"4px 10px",minHeight:32,color:"#5cb8ff",borderColor:"rgba(90,180,255,.3)",background:"rgba(90,180,255,.12)"}} title="선택 확정 후 이전 도구로 복귀">✅ 확정</button>
+<button onClick={()=>{sEditSel(null);editSelPath.current=null;sSelMoving(false)}} style={{...Z.hB,fontSize:9,padding:"4px 8px",minHeight:32,color:"#f88",borderColor:"rgba(255,100,100,.3)"}} title="선택 해제">{editSel?"✕ 해제":"—"}</button>
+<button onClick={()=>{sEditSel(null);editSelPath.current=null;sSelMoving(false);sEditTool(prevEditTool.current||"brush")}} style={{...Z.hB,fontSize:10,padding:"4px 10px",minHeight:32,color:"#5cb8ff",borderColor:"rgba(90,180,255,.3)",background:"rgba(90,180,255,.12)"}} title="선택 확정 후 이전 도구로 복귀">✅ 확정</button>
 </React.Fragment>}
 <div style={{width:1,height:20,background:"rgba(255,255,255,.08)"}}/>
 <button onClick={editUndo} style={{...Z.hB,fontSize:12,padding:"6px 12px",minHeight:44}} title="Ctrl+Z">↩</button>
@@ -3637,7 +3775,7 @@ return(
 {/* Opaque checkerboard layer — blocks the img, shows transparency */}
 <div style={{position:"absolute",inset:0,backgroundImage:"repeating-conic-gradient(#333 0% 25%, #555 0% 50%)",backgroundSize:"16px 16px"}}/>
 <canvas ref={editCanvasRef} style={{position:"absolute",inset:0,width:"100%",height:"100%",
-  cursor:spaceHeld?"grab":editTool==="eyedropper"?"crosshair":editTool==="blur"?"cell":editTool==="bgremove"?"crosshair":editTool==="wand"?"crosshair":"default",touchAction:"none"}}
+  cursor:spaceHeld?"grab":editTool==="eyedropper"?"crosshair":editTool==="blur"?"cell":editTool==="bgremove"?"crosshair":editTool==="wand"?(selMoving?"move":"crosshair"):"default",touchAction:"none"}}
   onMouseDown={editStartDraw}
   onContextMenu={e=>e.preventDefault()}
   onTouchStart={editTouchStart} onTouchMove={editTouchMove} onTouchEnd={editTouchEnd}/>
