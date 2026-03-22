@@ -827,8 +827,10 @@ const elRef=React.useRef(null);
 const toggleDD=()=>{
   if(!open&&elRef.current){
     const r=elRef.current.getBoundingClientRect();
-    const x=r.right+6;
-    const y=Math.min(r.top,window.innerHeight-340);
+    const ddW=280,ddH=340;
+    const spaceRight=window.innerWidth-r.right-6;
+    const x=spaceRight>=ddW?r.right+6:Math.max(4,r.left-ddW-6);
+    const y=Math.min(r.top,window.innerHeight-ddH);
     setDdPos({x,y});
   }
   setOpen(!open);
@@ -1952,7 +1954,17 @@ const editStopDraw=()=>{
 };
 
 const editClear=()=>{
-  const acv=getActiveCanvas();if(acv)acv.getContext("2d").clearRect(0,0,acv.width,acv.height);
+  const activeL=editLayers.find(l=>l.id===editActiveLayer);
+  const acv=getActiveCanvas();
+  if(acv){
+    acv.getContext("2d").clearRect(0,0,acv.width,acv.height);
+    // If source layer, redraw original image
+    if(activeL&&activeL.type==="source"&&editImg){
+      const img=new Image();
+      img.onload=()=>{acv.getContext("2d").drawImage(img,0,0,se.width,se.height);compositeEdit()};
+      img.src=editImg;
+    }
+  }
   if(editStrokeCanvas.current)editStrokeCanvas.current.getContext("2d").clearRect(0,0,editStrokeCanvas.current.width,editStrokeCanvas.current.height);
   editHistoryRef.current=[];sEditSel(null);editSelPath.current=null;compositeEdit();
 };
