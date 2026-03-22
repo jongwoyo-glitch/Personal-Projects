@@ -1349,7 +1349,26 @@ const initIpCanvas=useCallback(()=>{
   ipGridW.current=gw;ipGridH.current=gh;
   ipHistoryRef.current=[];ipLastPos.current=null;
   sIpZoom(1);sIpPan({x:0,y:0});
-},[se.width,se.height]);
+  // Restore existing mask if available
+  if(ipMaskB64){
+    const maskImg=new Image();
+    maskImg.onload=()=>{
+      const tmp=document.createElement("canvas");tmp.width=se.width;tmp.height=se.height;
+      const tctx=tmp.getContext("2d");
+      tctx.drawImage(maskImg,0,0,se.width,se.height);
+      const imgd=tctx.getImageData(0,0,se.width,se.height).data;
+      const g=ipGridRef.current;
+      // Sample center of each grid cell — if white (>127), mark as filled
+      for(let gy=0;gy<gh;gy++){for(let gx=0;gx<gw;gx++){
+        const px=Math.min(gx*IP_GRID+Math.floor(IP_GRID/2),se.width-1);
+        const py=Math.min(gy*IP_GRID+Math.floor(IP_GRID/2),se.height-1);
+        if(imgd[(py*se.width+px)*4]>127)g[gy*gw+gx]=1;
+      }}
+      ipRender();
+    };
+    maskImg.src="data:image/png;base64,"+ipMaskB64;
+  }
+},[se.width,se.height,ipMaskB64]);
 
 useEffect(()=>{if(ipEdit&&baseImg)setTimeout(initIpCanvas,100)},[ipEdit,baseImg,initIpCanvas]);
 
