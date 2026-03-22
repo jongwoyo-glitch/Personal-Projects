@@ -1070,6 +1070,7 @@ const[ipPan,sIpPan]=useState({x:0,y:0});
 const ipSpaceRef=useRef(false);
 const[ipSpaceHeld,sIpSpaceHeld]=useState(false);
 const ipSpacePanRef=useRef(null);
+const[ipBrushPreview,sIpBrushPreview]=useState(null);
 const[ipMaskUrl,sIPMaskUrl]=useState(null); // visual overlay for preview
 const[ipMaskB64,sIPMaskB64]=useState(null); // processed B&W mask base64 for API
 const ipCanvasRef=useRef(null);
@@ -1117,6 +1118,8 @@ const editImgRef=useRef(null);
 const editHistoryRef=useRef([]);
 const editWrapRef=useRef(null);
 const editLayerCanvases=useRef({}); // {id: canvasElement} - actual canvas DOMs
+const editDims=useRef({w:832,h:1216}); // actual edit canvas dimensions (may differ from se.width/se.height)
+const[editAR,sEditAR]=useState(832/1216); // edit canvas aspect ratio (triggers re-render)
 const lR=useRef(),tR=useRef(),cR=useRef(),nR=useRef();
 
 const{baseCols,baseChks,basePresets:_bpre,activeBasePresetIds:_abpid,chars,activeIds:_aid,vibeRefs:_vibeRefs,settings:se,collapsed}=D;
@@ -1402,6 +1405,18 @@ const ipWheel=(e)=>{
   sIpZoom(newZoom);
 };
 
+// Inpaint brush hover preview
+const ipHover=(e)=>{
+  if(ipSpaceRef.current){if(ipBrushPreview)sIpBrushPreview(null);return}
+  const parent=e.currentTarget.parentElement?.parentElement;
+  if(!parent)return;
+  const pr=parent.getBoundingClientRect();
+  sIpBrushPreview({x:e.clientX-pr.left,y:e.clientY-pr.top,size:ipBrush});
+  // Also forward to ipDraw for actual painting
+  ipDraw(e);
+};
+const ipHoverLeave=(e)=>{sIpBrushPreview(null);ipStopDraw(e)};
+
 const getIpXY=(e)=>{
   const cv=ipCanvasRef.current;if(!cv)return{x:0,y:0};
   const r=cv.getBoundingClientRect();
@@ -1599,7 +1614,7 @@ const editPinch=useRef(null);
 const editStrokeCanvas=useRef(null);
 
 const addEditLayer=(name)=>{
-  const cv=document.createElement("canvas");cv.width=se.width;cv.height=se.height;
+  const cv=document.createElement("canvas");cv.width=editDims.current.w;cv.height=editDims.current.h;
   const id=G();
   editLayerCanvases.current[id]=cv;
   sEditLayers(p=>[...p,{id,name:name||("레이어 "+(p.filter(x=>x.type!=="source").length+1)),visible:true,type:"paint"}]);
@@ -1611,10 +1626,10 @@ const initEditCanvas=useCallback(()=>{
   sEditZoom(1);sEditPan({x:0,y:0});
   // Create canvases
   const srcId=G();
-  const srcCv=document.createElement("canvas");srcCv.width=se.width;srcCv.height=se.height;
+  const srcCv=document.createElement("canvas");srcCv.width=editDims.current.w;srcCv.height=editDims.current.h;
   editLayerCanvases.current[srcId]=srcCv;
   const layerId=G();
-  const cv=document.createElement("canvas");cv.width=se.width;cv.height=se.height;
+  const cv=document.createElement("canvas");cv.width=editDims.current.w;cv.height=editDims.current.h;
   editLayerCanvases.current[layerId]=cv;
   sEditLayers([
     {id:srcId,name:"🖼 원본",visible:true,type:"source"},
@@ -1647,7 +1662,21 @@ useEffect(()=>{
   const img=new Image();
   img.onload=()=>{
     if(editSessionId.current!==sid)return; // session changed, abort
-    srcCv.getContext("2d").drawImage(img,0,0,se.width,se.height);
+    // Detect actual image dimensions
+    const iw=img.naturalWidth||editDims.current.w, ih=img.naturalHeight||editDims.current.h;
+    editDims.current={w:iw,h:ih};
+    sEditAR(iw/ih);
+    // Resize all layer canvases if dimensions differ
+    for(const[id,cv] of Object.entries(editLayerCanvases.current)){
+      if(cv.width!==iw||cv.height!==ih){
+        // Preserve existing content
+        const tmp=document.createElement("canvas");tmp.width=cv.width;tmp.height=cv.height;
+        tmp.getContext("2d").drawImage(cv,0,0);
+        cv.width=iw;cv.height=ih;
+        if(id!==srcLayer.id)cv.getContext("2d").drawImage(tmp,0,0);
+      }
+    }
+    srcCv.getContext("2d").drawImage(img,0,0,iw,ih);
     bakedSession.current=sid;
     compositeEdit();
   };
@@ -1666,7 +1695,7 @@ const drawAllLayers=(ctx)=>{
 const compositeEdit=()=>{
   const cv=editCanvasRef.current;if(!cv)return;
   const ctx=cv.getContext("2d");
-  cv.width=se.width;cv.height=se.height;
+  cv.width=editDims.current.w;cv.height=editDims.current.h;
   ctx.clearRect(0,0,cv.width,cv.height);
   drawAllLayers(ctx);
   // Show stroke preview while drawing (with target opacity)
@@ -1760,7 +1789,7 @@ const shelfToLayer=(item)=>{
     const id=addEditLayer(item.name+" (선반)");
     setTimeout(()=>{
       const cv=editLayerCanvases.current[id];
-      if(cv){cv.getContext("2d").drawImage(img,0,0,se.width,se.height);compositeEdit()}
+      if(cv){cv.getContext("2d").drawImage(img,0,0,editDims.current.w,editDims.current.h);compositeEdit()}
       tw("선반 → 새 레이어: "+item.name);
     },50);
   };
@@ -1785,21 +1814,21 @@ const getEditXY=(e)=>{
   const wrap=editWrapRef.current;if(!wrap)return{x:0,y:0};
   const r=wrap.getBoundingClientRect();
   const t=e.touches?e.touches[0]:e;
-  return{x:(t.clientX-r.left)/r.width*se.width,y:(t.clientY-r.top)/r.height*se.height};
+  return{x:(t.clientX-r.left)/r.width*editDims.current.w,y:(t.clientY-r.top)/r.height*editDims.current.h};
 };
 
 // Magic Wand: get composite image data for analysis
 const getCompositeImageData=()=>{
-  const tmp=document.createElement("canvas");tmp.width=se.width;tmp.height=se.height;
+  const tmp=document.createElement("canvas");tmp.width=editDims.current.w;tmp.height=editDims.current.h;
   const tctx=tmp.getContext("2d");
   drawAllLayers(tctx);
-  return tctx.getImageData(0,0,se.width,se.height);
+  return tctx.getImageData(0,0,editDims.current.w,editDims.current.h);
 };
 
 // Magic Wand: flood fill selection
 const doWandSelect=(px,py,mode)=>{
   mode=mode||"replace";
-  const w=se.width,h=se.height;
+  const w=editDims.current.w,h=editDims.current.h;
   const id=getCompositeImageData();
   const d=id.data;
   const sx=Math.max(0,Math.min(w-1,Math.round(px)));
@@ -1829,7 +1858,7 @@ const doWandSelect=(px,py,mode)=>{
 };
 
 const mergeSelMask=(newMask,mode)=>{
-  const w=se.width,h=se.height;
+  const w=editDims.current.w,h=editDims.current.h;
   let finalMask;
   if(mode==="add"&&editSel){
     finalMask=new Uint8Array(w*h);
@@ -1846,7 +1875,7 @@ const mergeSelMask=(newMask,mode)=>{
 const completeLasso=(mode)=>{
   const pts=lassoPoints.current;
   if(pts.length<3){lassoPoints.current=[];return}
-  const w=se.width,h=se.height;
+  const w=editDims.current.w,h=editDims.current.h;
   const tc=document.createElement("canvas");tc.width=w;tc.height=h;
   const tctx=tc.getContext("2d");
   tctx.fillStyle="#fff";tctx.beginPath();tctx.moveTo(pts[0].x,pts[0].y);
@@ -1860,7 +1889,7 @@ const completeLasso=(mode)=>{
 };
 
 const rebuildSelPath=(mask)=>{
-  const w=se.width,h=se.height;
+  const w=editDims.current.w,h=editDims.current.h;
   const path=new Path2D();
   for(let y=0;y<h;y++){
     let rs=-1;
@@ -1875,7 +1904,7 @@ const rebuildSelPath=(mask)=>{
 
 const expandSelection=(n)=>{
   if(!editSel)return;
-  const w=se.width,h=se.height;
+  const w=editDims.current.w,h=editDims.current.h;
   let cur=new Uint8Array(editSel);
   for(let step=0;step<n;step++){
     const next=new Uint8Array(cur);
@@ -1890,7 +1919,7 @@ const expandSelection=(n)=>{
 
 const shrinkSelection=(n)=>{
   if(!editSel)return;
-  const w=se.width,h=se.height;
+  const w=editDims.current.w,h=editDims.current.h;
   let cur=new Uint8Array(editSel);
   for(let step=0;step<n;step++){
     const next=new Uint8Array(cur);
@@ -1905,7 +1934,7 @@ const shrinkSelection=(n)=>{
 
 const invertSelection=()=>{
   if(!editSel)return;
-  const w=se.width,h=se.height;
+  const w=editDims.current.w,h=editDims.current.h;
   const inv=new Uint8Array(w*h);
   for(let i=0;i<w*h;i++)inv[i]=editSel[i]?0:1;
   sEditSel(inv);rebuildSelPath(inv);compositeEdit();
@@ -1916,7 +1945,7 @@ const startSelMove=(x,y)=>{
   if(!editSel)return;
   const acv=getActiveCanvas();if(!acv)return;
   editSaveSnap();
-  const w=se.width,h=se.height;
+  const w=editDims.current.w,h=editDims.current.h;
   const ctx=acv.getContext("2d");
   const imgData=ctx.getImageData(0,0,w,h);
   const extracted=new ImageData(w,h);
@@ -1935,7 +1964,7 @@ const startSelMove=(x,y)=>{
 const commitSelMove=()=>{
   const d=selMoveData.current;if(!d)return;
   const acv=getActiveCanvas();if(!acv)return;
-  const w=se.width,h=se.height,ctx=acv.getContext("2d");
+  const w=editDims.current.w,h=editDims.current.h,ctx=acv.getContext("2d");
   const ox=Math.round(d.offsetX),oy=Math.round(d.offsetY);
   const tmp=document.createElement("canvas");tmp.width=w;tmp.height=h;
   tmp.getContext("2d").putImageData(d.extracted,0,0);
@@ -1952,7 +1981,7 @@ const commitSelMove=()=>{
 const cancelSelMove=()=>{
   const d=selMoveData.current;if(!d)return;
   const acv=getActiveCanvas();if(!acv)return;
-  const tmp=document.createElement("canvas");tmp.width=se.width;tmp.height=se.height;
+  const tmp=document.createElement("canvas");tmp.width=editDims.current.w;tmp.height=editDims.current.h;
   tmp.getContext("2d").putImageData(d.extracted,0,0);
   acv.getContext("2d").drawImage(tmp,0,0);
   selMoveData.current=null;sSelMoving(false);compositeEdit();
@@ -1964,7 +1993,7 @@ const fillSelection=()=>{
   const acv=getActiveCanvas();if(!acv)return;
   editSaveSnap();
   const ctx=acv.getContext("2d");
-  const w=se.width,h=se.height;
+  const w=editDims.current.w,h=editDims.current.h;
   const imgd=ctx.getImageData(0,0,w,h);
   const dd=imgd.data;
   if(editTransparent){
@@ -2005,13 +2034,27 @@ const editSaveSnap=()=>{
 const brushResizing=useRef(null);
 const[brushPreview,sBrushPreview]=useState(null);
 
+// Hover preview for brush-based tools
+const editHover=(e)=>{
+  if(brushResizing.current)return; // resize mode has its own preview
+  if(editSpaceHeld)return;
+  const hasBrush=editTool==="brush"||editTool==="eraser"||editTool==="blur"||(editTool==="wand"&&wandSub==="brush");
+  if(!hasBrush){if(brushPreview)sBrushPreview(null);return}
+  const parent=editWrapRef.current?.parentElement;
+  if(!parent)return;
+  const pr=parent.getBoundingClientRect();
+  const size=editTool==="wand"?selBrushSize:editBrush;
+  sBrushPreview({x:e.clientX-pr.left,y:e.clientY-pr.top,size});
+};
+const editHoverLeave=()=>{if(brushPreview&&!brushResizing.current)sBrushPreview(null)};
+
 // Eyedropper helper
 const doEyedrop=(e)=>{
   const{x,y}=getEditXY(e);
-  const tmp=document.createElement("canvas");tmp.width=se.width;tmp.height=se.height;
+  const tmp=document.createElement("canvas");tmp.width=editDims.current.w;tmp.height=editDims.current.h;
   const tctx=tmp.getContext("2d");
   drawAllLayers(tctx);
-  const px=tctx.getImageData(Math.max(0,Math.min(se.width-1,Math.round(x))),Math.max(0,Math.min(se.height-1,Math.round(y))),1,1).data;
+  const px=tctx.getImageData(Math.max(0,Math.min(editDims.current.w-1,Math.round(x))),Math.max(0,Math.min(editDims.current.h-1,Math.round(y))),1,1).data;
   const hex="#"+[px[0],px[1],px[2]].map(v=>v.toString(16).padStart(2,"0")).join("");
   sEditColor(hex);sEditTransparent(false);tw("색상 추출: "+hex);
 };
@@ -2087,7 +2130,7 @@ const editStartDraw=(e)=>{
         d.offsetX=p.x-d.startX;d.offsetY=p.y-d.startY;
         // Render preview
         const acv=getActiveCanvas();if(!acv)return;
-        const w=se.width,h=se.height;
+        const w=editDims.current.w,h=editDims.current.h;
         compositeEdit();
         const ctx=editCanvasRef.current?.getContext("2d");if(!ctx)return;
         const tmp=document.createElement("canvas");tmp.width=w;tmp.height=h;
@@ -2120,9 +2163,9 @@ const editStartDraw=(e)=>{
       const onUpL=()=>{completeLasso(mode);compositeEdit();document.removeEventListener("mousemove",onMoveL);document.removeEventListener("mouseup",onUpL)};
       document.addEventListener("mousemove",onMoveL);document.addEventListener("mouseup",onUpL);
     }else if(wandSub==="brush"){
-      selWorkingMask.current=editSel?new Uint8Array(editSel):new Uint8Array(se.width*se.height);
+      selWorkingMask.current=editSel?new Uint8Array(editSel):new Uint8Array(editDims.current.w*editDims.current.h);
       const stampBrush=(px,py)=>{
-        const w=se.width,h=se.height,r=selBrushSize/2;
+        const w=editDims.current.w,h=editDims.current.h,r=selBrushSize/2;
         const m=selWorkingMask.current;
         const x0=Math.max(0,Math.floor(px-r)),x1=Math.min(w,Math.ceil(px+r));
         const y0=Math.max(0,Math.floor(py-r)),y1=Math.min(h,Math.ceil(py+r));
@@ -2159,11 +2202,11 @@ const editDoDraw=(e)=>{
     if(sp){ctx.save();ctx.clip(sp)}
     const r=Math.max(2,Math.floor(editBrush/2));
     const sr=Math.max(1,Math.floor(editBlurStr));
-    const tmp=document.createElement("canvas");tmp.width=se.width;tmp.height=se.height;
+    const tmp=document.createElement("canvas");tmp.width=editDims.current.w;tmp.height=editDims.current.h;
     const tctx=tmp.getContext("2d");
     drawAllLayers(tctx);
     const ix=Math.max(0,Math.round(x)-r),iy=Math.max(0,Math.round(y)-r);
-    const iw=Math.min(r*2,se.width-ix),ih=Math.min(r*2,se.height-iy);
+    const iw=Math.min(r*2,editDims.current.w-ix),ih=Math.min(r*2,editDims.current.h-iy);
     if(iw<=0||ih<=0){if(sp)ctx.restore();return}
     const sm=document.createElement("canvas");sm.width=Math.max(1,Math.round(iw/sr));sm.height=Math.max(1,Math.round(ih/sr));
     sm.getContext("2d").drawImage(tmp,ix,iy,iw,ih,0,0,sm.width,sm.height);
@@ -2175,7 +2218,7 @@ const editDoDraw=(e)=>{
     // All other tools: draw to stroke canvas for uniform opacity
     if(!editStrokeCanvas.current){
       editStrokeCanvas.current=document.createElement("canvas");
-      editStrokeCanvas.current.width=se.width;editStrokeCanvas.current.height=se.height;
+      editStrokeCanvas.current.width=editDims.current.w;editStrokeCanvas.current.height=editDims.current.h;
     }
     const sctx=editStrokeCanvas.current.getContext("2d");
     if(editTool==="eraser"){
@@ -2240,7 +2283,7 @@ const editClear=()=>{
     // If source layer, redraw original image
     if(activeL&&activeL.type==="source"&&editImg){
       const img=new Image();
-      img.onload=()=>{acv.getContext("2d").drawImage(img,0,0,se.width,se.height);compositeEdit()};
+      img.onload=()=>{acv.getContext("2d").drawImage(img,0,0,editDims.current.w,editDims.current.h);compositeEdit()};
       img.src=editImg;
     }
   }
@@ -2332,7 +2375,7 @@ useEffect(()=>{
       const lcv=editLayerCanvases.current[snap.layerId];
       if(lcv)lcv.getContext("2d").putImageData(snap.data,0,0);
       // Force re-composite via display canvas
-      const cv=editCanvasRef.current;if(cv){const ctx=cv.getContext("2d");cv.width=se.width;cv.height=se.height;ctx.clearRect(0,0,cv.width,cv.height);
+      const cv=editCanvasRef.current;if(cv){const ctx=cv.getContext("2d");cv.width=editDims.current.w;cv.height=editDims.current.h;ctx.clearRect(0,0,cv.width,cv.height);
         Object.keys(editLayerCanvases.current).forEach(id=>{const lcv2=editLayerCanvases.current[id];if(lcv2)ctx.drawImage(lcv2,0,0)});
       }
     }
@@ -2359,7 +2402,7 @@ const editWheel=(e)=>{
 
 const editApply=()=>{
   if(!editImg)return;
-  const out=document.createElement("canvas");out.width=se.width;out.height=se.height;
+  const out=document.createElement("canvas");out.width=editDims.current.w;out.height=editDims.current.h;
   const ctx=out.getContext("2d");
   drawAllLayers(ctx);
   out.toBlob(blob=>{
@@ -2370,7 +2413,7 @@ const editApply=()=>{
 };
 const editApplyToGen=()=>{
   if(!editImg)return;
-  const out=document.createElement("canvas");out.width=se.width;out.height=se.height;
+  const out=document.createElement("canvas");out.width=editDims.current.w;out.height=editDims.current.h;
   const ctx=out.getContext("2d");
   drawAllLayers(ctx);
   out.toBlob(blob=>{
@@ -2395,7 +2438,7 @@ const editBgRemove=async(mode)=>{
   const aData=aCtx.getImageData(0,0,acv.width,acv.height);
   let hasMask=false;for(let i=3;i<aData.data.length;i+=4){if(aData.data[i]>20){hasMask=true;break}}
   // Build composite image (without active layer's mask)
-  const full=document.createElement("canvas");full.width=se.width;full.height=se.height;
+  const full=document.createElement("canvas");full.width=editDims.current.w;full.height=editDims.current.h;
   const fCtx=full.getContext("2d");
   editLayers.forEach(l=>{
     if(!l.visible||l.id===editActiveLayer)return;
@@ -2417,7 +2460,7 @@ const editBgRemove=async(mode)=>{
       // NAI API removal
       sBgProgress("NAI API 호출 중...");
       const b64=full.toDataURL("image/png").replace(/^data:[^;]+;base64,/,"");
-      const resultUrl=await augmentImage(se.apiToken,"bg-removal",se.width,se.height,b64);
+      const resultUrl=await augmentImage(se.apiToken,"bg-removal",editDims.current.w,editDims.current.h,b64);
       const resp=await fetch(resultUrl);const blob=await resp.blob();
       bgImg=new Image();const bUrl=URL.createObjectURL(blob);
       await new Promise(r=>{bgImg.onload=r;bgImg.src=bUrl});
@@ -2430,15 +2473,15 @@ const editBgRemove=async(mode)=>{
     if(hasMask){
       // Masked mode: blend original and bg-removed based on mask
       editSaveSnap();
-      const out=document.createElement("canvas");out.width=se.width;out.height=se.height;
+      const out=document.createElement("canvas");out.width=editDims.current.w;out.height=editDims.current.h;
       const oCtx=out.getContext("2d");
       // Start with original
-      oCtx.drawImage(img,0,0,se.width,se.height);
-      const origData=oCtx.getImageData(0,0,se.width,se.height);
+      oCtx.drawImage(img,0,0,editDims.current.w,editDims.current.h);
+      const origData=oCtx.getImageData(0,0,editDims.current.w,editDims.current.h);
       // Draw bg-removed
-      oCtx.clearRect(0,0,se.width,se.height);
-      oCtx.drawImage(bgImg,0,0,se.width,se.height);
-      const bgData=oCtx.getImageData(0,0,se.width,se.height);
+      oCtx.clearRect(0,0,editDims.current.w,editDims.current.h);
+      oCtx.drawImage(bgImg,0,0,editDims.current.w,editDims.current.h);
+      const bgData=oCtx.getImageData(0,0,editDims.current.w,editDims.current.h);
       // Blend based on mask + reverse setting
       // Normal: painted=remove bg, unpainted=keep original
       // Reverse: painted=keep original, unpainted=remove bg
@@ -3598,13 +3641,13 @@ return(
 </div>}
 {/* Canvas area with zoom/pan */}
 <div style={{flex:1,overflow:"hidden",position:"relative",display:"flex",alignItems:"center",justifyContent:"center",cursor:editSpaceHeld?"grab":"default"}} onWheel={editWheel}>
-<div ref={editWrapRef} style={{position:"relative",transform:`scale(${editZoom}) translate(${editPan.x/editZoom}px,${editPan.y/editZoom}px)`,transformOrigin:"center center",transition:editPinch.current?"none":"transform 0.1s",aspectRatio:String(se.width/se.height),maxWidth:"90%",maxHeight:"90%"}}>
+<div ref={editWrapRef} style={{position:"relative",transform:`scale(${editZoom}) translate(${editPan.x/editZoom}px,${editPan.y/editZoom}px)`,transformOrigin:"center center",transition:editPinch.current?"none":"transform 0.1s",aspectRatio:String(editAR),maxWidth:"90%",maxHeight:"90%"}}>
 <img ref={editImgRef} src={editImg} style={{width:"100%",height:"100%",objectFit:"contain",display:"block",userSelect:"none",WebkitUserSelect:"none"}} draggable={false}/>
 {/* Opaque checkerboard layer — blocks the img, shows transparency */}
 <div style={{position:"absolute",inset:0,backgroundImage:"repeating-conic-gradient(#333 0% 25%, #555 0% 50%)",backgroundSize:"16px 16px"}}/>
 <canvas ref={editCanvasRef} style={{position:"absolute",inset:0,width:"100%",height:"100%",
-  cursor:editSpaceHeld?"grab":editTool==="eyedropper"?"crosshair":editTool==="blur"?"cell":editTool==="bgremove"?"crosshair":editTool==="wand"?"crosshair":"default",touchAction:"none"}}
-  onMouseDown={editStartDraw}
+  cursor:editSpaceHeld?"grab":brushPreview?"none":editTool==="eyedropper"?"crosshair":editTool==="blur"?"cell":editTool==="bgremove"?"crosshair":editTool==="wand"?"crosshair":"default",touchAction:"none"}}
+  onMouseDown={editStartDraw} onMouseMove={editHover} onMouseLeave={editHoverLeave}
   onContextMenu={e=>e.preventDefault()}
   onTouchStart={editTouchStart} onTouchMove={editTouchMove} onTouchEnd={editTouchEnd}/>
 </div>
@@ -3649,12 +3692,13 @@ return(
 <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",padding:10,minHeight:0,touchAction:"none",cursor:ipSpaceHeld?"grab":"default"}} onContextMenu={e=>e.preventDefault()} onWheel={ipWheel}>
 <div style={{position:"relative",maxWidth:"100%",maxHeight:"100%",aspectRatio:String(se.width/se.height),transform:`scale(${ipZoom}) translate(${ipPan.x/ipZoom}px,${ipPan.y/ipZoom}px)`,transformOrigin:"center center"}}>
 <img ref={ipImgRef} src={baseImg} style={{width:"100%",height:"100%",objectFit:"contain",display:"block",borderRadius:4,userSelect:"none",WebkitUserSelect:"none",WebkitTouchCallout:"none",pointerEvents:"none"}} draggable={false}/>
-<canvas ref={ipCanvasRef} style={{position:"absolute",inset:0,width:"100%",height:"100%",cursor:ipSpaceHeld?"grab":"crosshair",touchAction:"none",borderRadius:4,opacity:0.5,WebkitTouchCallout:"none",WebkitUserSelect:"none"}}
-  onMouseDown={ipStartDraw} onMouseMove={ipDraw} onMouseUp={ipStopDraw} onMouseLeave={ipStopDraw}
+<canvas ref={ipCanvasRef} style={{position:"absolute",inset:0,width:"100%",height:"100%",cursor:ipSpaceHeld?"grab":ipBrushPreview?"none":"crosshair",touchAction:"none",borderRadius:4,opacity:0.5,WebkitTouchCallout:"none",WebkitUserSelect:"none"}}
+  onMouseDown={ipStartDraw} onMouseMove={ipHover} onMouseUp={ipStopDraw} onMouseLeave={ipHoverLeave}
   onTouchStart={ipStartDraw} onTouchMove={ipDraw} onTouchEnd={ipStopDraw}
   onContextMenu={e=>e.preventDefault()}/>
 {ipZoom!==1&&<div style={{position:"absolute",top:4,right:4,fontSize:9,padding:"2px 6px",borderRadius:3,background:"rgba(0,0,0,.6)",color:"#aaa",pointerEvents:"none"}}>{Math.round(ipZoom*100)}%</div>}
 </div>
+{ipBrushPreview&&<div style={{position:"absolute",left:ipBrushPreview.x-ipBrushPreview.size/2*ipZoom,top:ipBrushPreview.y-ipBrushPreview.size/2*ipZoom,width:ipBrushPreview.size*ipZoom,height:ipBrushPreview.size*ipZoom,borderRadius:"50%",border:"2px solid rgba(255,255,255,.7)",pointerEvents:"none",boxShadow:"0 0 0 1px rgba(0,0,0,.4)",zIndex:10}}/>}
 </div>
 </div>
 </div>}
