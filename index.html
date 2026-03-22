@@ -1502,6 +1502,60 @@ const addEditLayer=(name)=>{
   sEditLayers(p=>[...p,{id,name:name||("레이어 "+(p.filter(x=>x.type!=="source").length+1)),visible:true,type:"paint"}]);
   sEditActiveLayer(id);return id;
 };
+
+// Layer copy → clipboard (PNG)
+const copyLayerToClipboard=async()=>{
+  const acv=getActiveCanvas?.();
+  if(!acv){tw("⚠ 레이어를 선택하세요");return}
+  try{
+    const blob=await new Promise(r=>acv.toBlob(r,"image/png"));
+    await navigator.clipboard.write([new ClipboardItem({"image/png":blob})]);
+    tw("레이어 → 클립보드 복사됨");
+  }catch(e){tw("⚠ 클립보드 복사 실패: "+e.message)}
+};
+
+// Clipboard → new layer
+const pasteLayerFromClipboard=async()=>{
+  try{
+    const items=await navigator.clipboard.read();
+    let blob=null;
+    for(const item of items){
+      if(item.types.includes("image/png")){blob=await item.getType("image/png");break}
+      if(item.types.includes("image/jpeg")){blob=await item.getType("image/jpeg");break}
+    }
+    if(!blob){tw("⚠ 클립보드에 이미지가 없습니다");return}
+    const url=URL.createObjectURL(blob);
+    const img=new Image();
+    img.onload=()=>{
+      const id=addEditLayer("붙여넣기");
+      const cv=editLayerCanvases.current[id];
+      if(cv){
+        const ctx=cv.getContext("2d");
+        ctx.drawImage(img,0,0,se.width,se.height);
+        compositeEdit();
+      }
+      URL.revokeObjectURL(url);
+      tw("클립보드 → 새 레이어 붙여넣기 완료");
+    };
+    img.onerror=()=>{URL.revokeObjectURL(url);tw("⚠ 이미지 로드 실패")};
+    img.src=url;
+  }catch(e){tw("⚠ 클립보드 읽기 실패: "+e.message)}
+};
+
+// Duplicate active layer
+const duplicateLayer=()=>{
+  const acv=getActiveCanvas?.();
+  if(!acv){tw("⚠ 레이어를 선택하세요");return}
+  const activeL=editLayers.find(l=>l.id===editActiveLayer);
+  const newName=(activeL?.name||"레이어")+" (복제)";
+  const id=addEditLayer(newName);
+  const cv=editLayerCanvases.current[id];
+  if(cv){
+    cv.getContext("2d").drawImage(acv,0,0);
+    compositeEdit();
+  }
+  tw("레이어 복제됨");
+};
 const initEditCanvas=useCallback(()=>{
   editLayerCanvases.current={};editStrokeCanvas.current=null;
   sEditLayers([]);sEditActiveLayer(null);editHistoryRef.current=[];
@@ -2063,6 +2117,8 @@ useEffect(()=>{
         Object.keys(editLayerCanvases.current).forEach(id=>{const lcv2=editLayerCanvases.current[id];if(lcv2)ctx.drawImage(lcv2,0,0)});
       }
     }
+    else if((e.ctrlKey||e.metaKey)&&e.key==="c"){if(e.target.tagName==="INPUT"||e.target.tagName==="TEXTAREA")return;e.preventDefault();copyLayerToClipboard()}
+    else if((e.ctrlKey||e.metaKey)&&e.key==="v"){if(e.target.tagName==="INPUT"||e.target.tagName==="TEXTAREA")return;e.preventDefault();pasteLayerFromClipboard()}
     else if(e.key==="["){e.preventDefault();sEditBrush(b=>Math.max(1,b-(e.shiftKey?10:3)))}
     else if(e.key==="]"){e.preventDefault();sEditBrush(b=>Math.min(100,b+(e.shiftKey?10:3)))}
   };
@@ -3277,8 +3333,12 @@ return <div key={t} style={{borderRadius:12,border:`1px solid ${bc}`,background:
 {editMode==="edit"&&<div style={{width:234,borderRight:"1px solid rgba(90,180,255,.1)",background:"rgba(10,8,20,.6)",display:"flex",flexDirection:"column",flexShrink:0}}>
 <div style={{padding:"10px 13px",borderBottom:"1px solid rgba(90,180,255,.08)",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
 <span style={{fontSize:17,fontWeight:700,color:"#5cb8ff"}}>레이어</span>
-<button onClick={()=>addEditLayer()} style={{...Z.pB,width:34,height:34,fontSize:17}}>+</button>
-</div>
+<div style={{display:"flex",gap:3}}>
+<button onClick={copyLayerToClipboard} style={{...Z.tB,width:28,height:28,fontSize:11}} title="레이어 → 클립보드 (Ctrl+C)">📋</button>
+<button onClick={pasteLayerFromClipboard} style={{...Z.tB,width:28,height:28,fontSize:11}} title="클립보드 → 새 레이어 (Ctrl+V)">📥</button>
+<button onClick={duplicateLayer} style={{...Z.tB,width:28,height:28,fontSize:11,color:"#a88cff"}} title="레이어 복제">⊕</button>
+<button onClick={()=>addEditLayer()} style={{...Z.pB,width:28,height:28,fontSize:14}}>+</button>
+</div></div>
 <div className="scroll-y" style={{flex:1,padding:8}}>
 {[...editLayers].reverse().map((l,ri)=>{
 const idx=editLayers.length-1-ri;
