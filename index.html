@@ -1063,6 +1063,12 @@ const[ipEdit,sIPE]=useState(false); // inpaint editor open
 const[ipStrength,sIPS]=useState(0.7);
 const[ipBrush,sIPB]=useState(64);
 const[ipErase,sIPEr]=useState(false);
+const[ipZoom,sIpZoom]=useState(1);
+const[ipPan,sIpPan]=useState({x:0,y:0});
+const ipSpaceRef=useRef(false);
+const[ipSpaceHeld,sIpSpaceHeld]=useState(false);
+const ipSpacePanRef=useRef(null);
+const ipWrapRef=useRef(null);
 const[ipMaskUrl,sIPMaskUrl]=useState(null); // visual overlay for preview
 const[ipMaskB64,sIPMaskB64]=useState(null); // processed B&W mask base64 for API
 const ipCanvasRef=useRef(null);
@@ -1092,6 +1098,7 @@ const spaceHeldRef=useRef(false); // spacebar held (immediate read for event han
 const[spaceHeld,sSpaceHeld]=useState(false); // spacebar held (for cursor re-render)
 const spacePanRef=useRef(null); // {startX,startY,panX,panY} during space+drag
 const editToolNames={brush:"브러시",eraser:"지우개",eyedropper:"스포이드",blur:"블러",wand:"선택"};
+const[editShelf,sEditShelf]=useState([]); // [{id,name,dataUrl}] — internal image shelf
 const[editShortcuts,sEditShortcuts]=useState(()=>{try{return JSON.parse(localStorage.getItem("nai_edit_shortcuts"))||{}}catch{return{}}});
 const[shortcutModal,sShortcutModal]=useState(null); // tool id being configured
 const shortcutModalPos=useRef({x:0,y:0});
@@ -1334,9 +1341,26 @@ const initIpCanvas=useCallback(()=>{
   ipGridRef.current=new Uint8Array(gw*gh);
   ipGridW.current=gw;ipGridH.current=gh;
   ipHistoryRef.current=[];ipLastPos.current=null;
+  sIpZoom(1);sIpPan({x:0,y:0});
 },[se.width,se.height]);
 
 useEffect(()=>{if(ipEdit&&baseImg)setTimeout(initIpCanvas,100)},[ipEdit,baseImg,initIpCanvas]);
+
+// Inpaint spacebar pan + keyboard
+useEffect(()=>{
+  if(!ipEdit)return;
+  const down=(e)=>{
+    if(e.target.tagName==="INPUT"||e.target.tagName==="TEXTAREA")return;
+    if(e.code==="Space"&&!e.repeat){e.preventDefault();ipSpaceRef.current=true;sIpSpaceHeld(true)}
+    if((e.ctrlKey||e.metaKey)&&e.key==="z"){e.preventDefault();ipUndo()}
+  };
+  const up=(e)=>{
+    if(e.code==="Space"){e.preventDefault();ipSpaceRef.current=false;sIpSpaceHeld(false);ipSpacePanRef.current=null}
+  };
+  window.addEventListener("keydown",down);
+  window.addEventListener("keyup",up);
+  return()=>{window.removeEventListener("keydown",down);window.removeEventListener("keyup",up);ipSpaceRef.current=false;sIpSpaceHeld(false)};
+},[ipEdit]);
 
 const getIpXY=(e)=>{
   const cv=ipCanvasRef.current;if(!cv)return{x:0,y:0};
@@ -1397,6 +1421,25 @@ const ipStampGrid=(x,y,brushSize,erase)=>{
   ipRender();
 };
 const ipStartDraw=(e)=>{
+  // Spacebar + drag = pan
+  if(ipSpaceRef.current&&!e.touches){
+    e.preventDefault();
+    ipSpacePanRef.current={startX:e.clientX,startY:e.clientY,panX:ipPan.x,panY:ipPan.y};
+    const onMove=(ev)=>{
+      ev.preventDefault();
+      if(!ipSpacePanRef.current)return;
+      sIpPan({x:ipSpacePanRef.current.panX+(ev.clientX-ipSpacePanRef.current.startX),
+              y:ipSpacePanRef.current.panY+(ev.clientY-ipSpacePanRef.current.startY)});
+    };
+    const onUp=()=>{
+      ipSpacePanRef.current=null;
+      document.removeEventListener("mousemove",onMove);
+      document.removeEventListener("mouseup",onUp);
+    };
+    document.addEventListener("mousemove",onMove);
+    document.addEventListener("mouseup",onUp);
+    return;
+  }
   e.preventDefault();ipSaveSnap();ipDrawing.current=true;
   const p=getIpXY(e);ipLastPos.current=p;
   ipStampGrid(p.x,p.y,ipBrush,ipErase);
@@ -1425,6 +1468,21 @@ const ipUndo=()=>{
   else{const snap=h.pop();if(ipGridRef.current&&snap)ipGridRef.current.set(snap)}
   ipRender();
 };
+
+// Inpaint wheel zoom
+const ipWheel=(e)=>{
+  e.preventDefault();
+  const factor=e.deltaY>0?0.9:1.1;
+  const newZoom=Math.max(0.25,Math.min(5,ipZoom*factor));
+  const scale=newZoom/ipZoom;
+  const parent=e.currentTarget;const pr=parent.getBoundingClientRect();
+  const ccx=pr.left+pr.width/2,ccy=pr.top+pr.height/2;
+  const focalX=e.clientX-ccx-ipPan.x;
+  const focalY=e.clientY-ccy-ipPan.y;
+  sIpPan(p=>({x:p.x+focalX*(1-scale),y:p.y+focalY*(1-scale)}));
+  sIpZoom(newZoom);
+};
+
 const getMaskB64=()=>{
   const g=ipGridRef.current;if(!g)return null;
   const w=se.width,h=se.height,gs=IP_GRID;
@@ -1503,59 +1561,6 @@ const addEditLayer=(name)=>{
   sEditActiveLayer(id);return id;
 };
 
-// Layer copy → clipboard (PNG)
-const copyLayerToClipboard=async()=>{
-  const acv=getActiveCanvas?.();
-  if(!acv){tw("⚠ 레이어를 선택하세요");return}
-  try{
-    const blob=await new Promise(r=>acv.toBlob(r,"image/png"));
-    await navigator.clipboard.write([new ClipboardItem({"image/png":blob})]);
-    tw("레이어 → 클립보드 복사됨");
-  }catch(e){tw("⚠ 클립보드 복사 실패: "+e.message)}
-};
-
-// Clipboard → new layer
-const pasteLayerFromClipboard=async()=>{
-  try{
-    const items=await navigator.clipboard.read();
-    let blob=null;
-    for(const item of items){
-      if(item.types.includes("image/png")){blob=await item.getType("image/png");break}
-      if(item.types.includes("image/jpeg")){blob=await item.getType("image/jpeg");break}
-    }
-    if(!blob){tw("⚠ 클립보드에 이미지가 없습니다");return}
-    const url=URL.createObjectURL(blob);
-    const img=new Image();
-    img.onload=()=>{
-      const id=addEditLayer("붙여넣기");
-      const cv=editLayerCanvases.current[id];
-      if(cv){
-        const ctx=cv.getContext("2d");
-        ctx.drawImage(img,0,0,se.width,se.height);
-        compositeEdit();
-      }
-      URL.revokeObjectURL(url);
-      tw("클립보드 → 새 레이어 붙여넣기 완료");
-    };
-    img.onerror=()=>{URL.revokeObjectURL(url);tw("⚠ 이미지 로드 실패")};
-    img.src=url;
-  }catch(e){tw("⚠ 클립보드 읽기 실패: "+e.message)}
-};
-
-// Duplicate active layer
-const duplicateLayer=()=>{
-  const acv=getActiveCanvas?.();
-  if(!acv){tw("⚠ 레이어를 선택하세요");return}
-  const activeL=editLayers.find(l=>l.id===editActiveLayer);
-  const newName=(activeL?.name||"레이어")+" (복제)";
-  const id=addEditLayer(newName);
-  const cv=editLayerCanvases.current[id];
-  if(cv){
-    cv.getContext("2d").drawImage(acv,0,0);
-    compositeEdit();
-  }
-  tw("레이어 복제됨");
-};
 const initEditCanvas=useCallback(()=>{
   editLayerCanvases.current={};editStrokeCanvas.current=null;
   sEditLayers([]);sEditActiveLayer(null);editHistoryRef.current=[];
@@ -1671,6 +1676,59 @@ useEffect(()=>{if(editMode!=="edit")sShortcutModal(null)},[editMode]);
 useEffect(()=>{if(editTool!=="wand")prevEditTool.current=editTool},[editTool]);
 
 const getActiveCanvas=()=>editLayerCanvases.current[editActiveLayer]||null;
+
+// Copy layer → internal shelf
+const copyToShelf=(layerId)=>{
+  const cv=editLayerCanvases.current[layerId];
+  if(!cv){tw("⚠ 레이어를 선택하세요");return}
+  const l=editLayers.find(x=>x.id===layerId);
+  const name=l?.name||"레이어";
+  // Create thumbnail (max 120px wide)
+  const thumbCv=document.createElement("canvas");
+  const scale=Math.min(120/cv.width,80/cv.height,1);
+  thumbCv.width=Math.round(cv.width*scale);thumbCv.height=Math.round(cv.height*scale);
+  const tctx=thumbCv.getContext("2d");
+  tctx.drawImage(cv,0,0,thumbCv.width,thumbCv.height);
+  const thumbUrl=thumbCv.toDataURL("image/png");
+  // Store full-res data
+  const dataUrl=cv.toDataURL("image/png");
+  sEditShelf(p=>[{id:G(),name,thumbUrl,dataUrl},...p].slice(0,20)); // max 20 items
+  tw("📌 선반에 복사: "+name);
+};
+
+// Shelf item → new layer
+const shelfToLayer=(item)=>{
+  const img=new Image();
+  img.onload=()=>{
+    const id=addEditLayer(item.name+" (선반)");
+    setTimeout(()=>{
+      const cv=editLayerCanvases.current[id];
+      if(cv){
+        cv.getContext("2d").drawImage(img,0,0,se.width,se.height);
+        compositeEdit();
+      }
+      tw("선반 → 새 레이어: "+item.name);
+    },50);
+  };
+  img.src=item.dataUrl;
+};
+
+// Duplicate active layer
+const duplicateLayer=()=>{
+  const acv=getActiveCanvas();
+  if(!acv){tw("⚠ 레이어를 선택하세요");return}
+  const activeL=editLayers.find(l=>l.id===editActiveLayer);
+  const newName=(activeL?.name||"레이어")+" (복제)";
+  const id=addEditLayer(newName);
+  setTimeout(()=>{
+    const cv=editLayerCanvases.current[id];
+    if(cv){
+      cv.getContext("2d").drawImage(acv,0,0);
+      compositeEdit();
+    }
+    tw("레이어 복제됨");
+  },50);
+};
 
 const getEditXY=(e)=>{
   const wrap=editWrapRef.current;if(!wrap)return{x:0,y:0};
@@ -2117,8 +2175,7 @@ useEffect(()=>{
         Object.keys(editLayerCanvases.current).forEach(id=>{const lcv2=editLayerCanvases.current[id];if(lcv2)ctx.drawImage(lcv2,0,0)});
       }
     }
-    else if((e.ctrlKey||e.metaKey)&&e.key==="c"){if(e.target.tagName==="INPUT"||e.target.tagName==="TEXTAREA")return;e.preventDefault();copyLayerToClipboard()}
-    else if((e.ctrlKey||e.metaKey)&&e.key==="v"){if(e.target.tagName==="INPUT"||e.target.tagName==="TEXTAREA")return;e.preventDefault();pasteLayerFromClipboard()}
+    else if((e.ctrlKey||e.metaKey)&&e.key==="c"){if(e.target.tagName==="INPUT"||e.target.tagName==="TEXTAREA")return;e.preventDefault();copyToShelf(editActiveLayer)}
     else if(e.key==="["){e.preventDefault();sEditBrush(b=>Math.max(1,b-(e.shiftKey?10:3)))}
     else if(e.key==="]"){e.preventDefault();sEditBrush(b=>Math.min(100,b+(e.shiftKey?10:3)))}
   };
@@ -3334,8 +3391,7 @@ return <div key={t} style={{borderRadius:12,border:`1px solid ${bc}`,background:
 <div style={{padding:"10px 13px",borderBottom:"1px solid rgba(90,180,255,.08)",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
 <span style={{fontSize:17,fontWeight:700,color:"#5cb8ff"}}>레이어</span>
 <div style={{display:"flex",gap:3}}>
-<button onClick={copyLayerToClipboard} style={{...Z.tB,width:28,height:28,fontSize:11}} title="레이어 → 클립보드 (Ctrl+C)">📋</button>
-<button onClick={pasteLayerFromClipboard} style={{...Z.tB,width:28,height:28,fontSize:11}} title="클립보드 → 새 레이어 (Ctrl+V)">📥</button>
+<button onClick={()=>copyToShelf(editActiveLayer)} style={{...Z.tB,width:28,height:28,fontSize:11}} title="현재 레이어 → 선반 (Ctrl+C)">📌</button>
 <button onClick={duplicateLayer} style={{...Z.tB,width:28,height:28,fontSize:11,color:"#a88cff"}} title="레이어 복제">⊕</button>
 <button onClick={()=>addEditLayer()} style={{...Z.pB,width:28,height:28,fontSize:14}}>+</button>
 </div></div>
@@ -3358,9 +3414,28 @@ return(
 {idx<editLayers.length-1&&<button onClick={()=>sEditLayers(p=>{const a=[...p];[a[idx],a[idx+1]]=[a[idx+1],a[idx]];return a})} style={{background:"none",border:"none",color:"#666",fontSize:10,cursor:"pointer",padding:"0 3px",lineHeight:1}}>▲</button>}
 {idx>0&&<button onClick={()=>sEditLayers(p=>{const a=[...p];[a[idx],a[idx-1]]=[a[idx-1],a[idx]];return a})} style={{background:"none",border:"none",color:"#666",fontSize:10,cursor:"pointer",padding:"0 3px",lineHeight:1}}>▼</button>}
 </div>
+{/* Copy to shelf */}
+<button onClick={e=>{e.stopPropagation();copyToShelf(l.id)}} style={{background:"none",border:"none",color:"#5cb8ff",fontSize:11,cursor:"pointer",padding:0,flexShrink:0}} title="선반에 복사">📌</button>
 {/* Delete */}
 {!isSrc&&editLayers.filter(x=>x.type!=="source").length>1&&<button onClick={e=>{e.stopPropagation();const lid=l.id;delete editLayerCanvases.current[lid];sEditLayers(p=>p.filter(x=>x.id!==lid));if(editActiveLayer===lid){const next=editLayers.find(x=>x.id!==lid&&x.type!=="source");if(next)sEditActiveLayer(next.id)}}} style={{background:"none",border:"none",color:"#f55",fontSize:13,cursor:"pointer",padding:0,flexShrink:0}}>✕</button>}
 </div>)})}
+</div>
+{/* Shelf - copied layer images */}
+<div style={{borderTop:"1px solid rgba(90,180,255,.08)",flexShrink:0}}>
+<div style={{padding:"6px 10px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+<span style={{fontSize:11,fontWeight:700,color:"#a88cff"}}>📌 선반 <span style={{fontWeight:400,color:"#555"}}>{editShelf.length}</span></span>
+{editShelf.length>0&&<button onClick={()=>sEditShelf([])} style={{background:"none",border:"none",color:"#f55",fontSize:9,cursor:"pointer",padding:"2px 6px"}}>전체 삭제</button>}
+</div>
+{editShelf.length>0&&<div className="scroll-y" style={{maxHeight:160,padding:"0 8px 8px",display:"flex",flexWrap:"wrap",gap:4,alignContent:"flex-start"}}>
+{editShelf.map(item=>(
+<div key={item.id} style={{position:"relative",cursor:"pointer",borderRadius:6,overflow:"hidden",border:"1px solid rgba(120,90,255,.2)",background:"rgba(0,0,0,.3)"}}
+  onClick={()=>shelfToLayer(item)} title={"레이어로 불러오기: "+item.name}>
+<img src={item.thumbUrl} style={{display:"block",height:48,width:"auto",objectFit:"contain"}}/>
+<button onClick={e=>{e.stopPropagation();sEditShelf(p=>p.filter(x=>x.id!==item.id))}} style={{position:"absolute",top:1,right:1,background:"rgba(0,0,0,.6)",border:"none",color:"#f66",fontSize:9,cursor:"pointer",borderRadius:3,padding:"0 3px",lineHeight:"14px"}}>✕</button>
+<div style={{position:"absolute",bottom:0,left:0,right:0,background:"rgba(0,0,0,.7)",fontSize:8,color:"#aaa",padding:"1px 3px",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{item.name}</div>
+</div>))}
+</div>}
+{editShelf.length===0&&<div style={{padding:"4px 10px 8px",fontSize:9,color:"#444"}}>레이어의 📌 버튼으로 이미지를 선반에 저장하세요</div>}
 </div>
 </div>}
 {/* Canvas area with zoom/pan */}
@@ -3394,6 +3469,8 @@ return(
 </div>
 <button onClick={ipUndo} style={{...Z.hB,fontSize:11,padding:"6px 12px",minHeight:44}}>↩ 되돌리기</button>
 <button onClick={ipClear} style={{...Z.hB,fontSize:11,padding:"6px 12px",minHeight:44,color:"#f66"}}>✕ 초기화</button>
+<span style={{fontSize:9,color:"#555"}}>{Math.round(ipZoom*100)}%</span>
+<button onClick={()=>{sIpZoom(1);sIpPan({x:0,y:0})}} style={{...Z.hB,fontSize:10,padding:"4px 8px",minHeight:44}}>1:1</button>
 <div style={{flex:1}}/>
 <button onClick={applyIpMask} className="gen-btn" style={{fontSize:12,padding:"6px 16px",minHeight:36}}>✅ 마스크 적용</button>
 <button onClick={()=>sIPE(false)} style={{...Z.hB,fontSize:14,padding:"4px 10px",color:"#f66"}}>✕</button>
@@ -3412,10 +3489,10 @@ return(
   color:ipErase?"#f66":"#888"}}>🧹</button>
 </div>
 {/* Canvas area */}
-<div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",padding:10,minHeight:0,touchAction:"none"}} onContextMenu={e=>e.preventDefault()}>
-<div style={{position:"relative",maxWidth:"100%",maxHeight:"100%",aspectRatio:String(se.width/se.height)}}>
+<div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",padding:10,minHeight:0,touchAction:"none"}} onContextMenu={e=>e.preventDefault()} onWheel={ipWheel}>
+<div ref={ipWrapRef} style={{position:"relative",maxWidth:"90%",maxHeight:"90%",aspectRatio:String(se.width/se.height),transform:`scale(${ipZoom}) translate(${ipPan.x/ipZoom}px,${ipPan.y/ipZoom}px)`,transformOrigin:"center center",transition:"transform 0.1s"}}>
 <img ref={ipImgRef} src={baseImg} style={{width:"100%",height:"100%",objectFit:"contain",display:"block",borderRadius:4,userSelect:"none",WebkitUserSelect:"none",WebkitTouchCallout:"none",pointerEvents:"none"}} draggable={false}/>
-<canvas ref={ipCanvasRef} style={{position:"absolute",inset:0,width:"100%",height:"100%",cursor:"crosshair",touchAction:"none",borderRadius:4,opacity:0.5,WebkitTouchCallout:"none",WebkitUserSelect:"none"}}
+<canvas ref={ipCanvasRef} style={{position:"absolute",inset:0,width:"100%",height:"100%",cursor:ipSpaceHeld?"grab":"crosshair",touchAction:"none",borderRadius:4,opacity:0.5,WebkitTouchCallout:"none",WebkitUserSelect:"none"}}
   onMouseDown={ipStartDraw} onMouseMove={ipDraw} onMouseUp={ipStopDraw} onMouseLeave={ipStopDraw}
   onTouchStart={ipStartDraw} onTouchMove={ipDraw} onTouchEnd={ipStopDraw}
   onContextMenu={e=>e.preventDefault()}/>
