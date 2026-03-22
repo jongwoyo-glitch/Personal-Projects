@@ -1086,6 +1086,9 @@ const[pencilOnly,sPencilOnly]=useState(false); // Apple Pencil only mode
 const[editBlurStr,sEditBlurStr]=useState(4);
 const[editZoom,sEditZoom]=useState(1);
 const[editPan,sEditPan]=useState({x:0,y:0});
+const editSpaceRef=useRef(false);
+const[editSpaceHeld,sEditSpaceHeld]=useState(false);
+const editSpacePanRef=useRef(null);
 const[showCW,sShowCW]=useState(false); // color wheel visible
 const[editSel,sEditSel]=useState(null); // Uint8Array selection mask (1=selected, 0=not)
 const[wandTol,sWandTol]=useState(32); // wand tolerance 0-255
@@ -1699,6 +1702,21 @@ useEffect(()=>{if(editMode!=="edit")sShortcutModal(null)},[editMode]);
 // Track last non-wand tool for wand confirm
 useEffect(()=>{if(editTool!=="wand")prevEditTool.current=editTool},[editTool]);
 
+// Edit canvas: spacebar pan
+useEffect(()=>{
+  if(!editMode)return;
+  const down=(e)=>{
+    if(e.target.tagName==="INPUT"||e.target.tagName==="TEXTAREA")return;
+    if(e.code==="Space"&&!e.repeat){e.preventDefault();editSpaceRef.current=true;sEditSpaceHeld(true)}
+  };
+  const up=(e)=>{
+    if(e.code==="Space"){e.preventDefault();editSpaceRef.current=false;sEditSpaceHeld(false);editSpacePanRef.current=null}
+  };
+  window.addEventListener("keydown",down);
+  window.addEventListener("keyup",up);
+  return()=>{window.removeEventListener("keydown",down);window.removeEventListener("keyup",up);editSpaceRef.current=false;sEditSpaceHeld(false)};
+},[editMode]);
+
 const getActiveCanvas=()=>editLayerCanvases.current[editActiveLayer]||null;
 
 const getEditXY=(e)=>{
@@ -1819,6 +1837,25 @@ const doEyedrop=(e)=>{
 };
 
 const editStartDraw=(e)=>{
+  // Spacebar + drag = pan
+  if(editSpaceRef.current&&!e.touches){
+    e.preventDefault();
+    editSpacePanRef.current={startX:e.clientX,startY:e.clientY,panX:editPan.x,panY:editPan.y};
+    const onMove=(ev)=>{
+      ev.preventDefault();
+      if(!editSpacePanRef.current)return;
+      sEditPan({x:editSpacePanRef.current.panX+(ev.clientX-editSpacePanRef.current.startX),
+                y:editSpacePanRef.current.panY+(ev.clientY-editSpacePanRef.current.startY)});
+    };
+    const onUp=()=>{
+      editSpacePanRef.current=null;
+      document.removeEventListener("mousemove",onMove);
+      document.removeEventListener("mouseup",onUp);
+    };
+    document.addEventListener("mousemove",onMove);
+    document.addEventListener("mouseup",onUp);
+    return;
+  }
   // Right-click = eyedropper (desktop)
   if(e.button===2){e.preventDefault();doEyedrop(e);return}
   // Command/Ctrl + click = eyedropper (iPad keyboard / desktop)
@@ -3265,13 +3302,13 @@ return(
 </div>
 </div>}
 {/* Canvas area with zoom/pan */}
-<div style={{flex:1,overflow:"hidden",position:"relative",display:"flex",alignItems:"center",justifyContent:"center"}} onWheel={editWheel}>
+<div style={{flex:1,overflow:"hidden",position:"relative",display:"flex",alignItems:"center",justifyContent:"center",cursor:editSpaceHeld?"grab":"default"}} onWheel={editWheel}>
 <div ref={editWrapRef} style={{position:"relative",transform:`scale(${editZoom}) translate(${editPan.x/editZoom}px,${editPan.y/editZoom}px)`,transformOrigin:"center center",transition:editPinch.current?"none":"transform 0.1s",aspectRatio:String(se.width/se.height),maxWidth:"90%",maxHeight:"90%"}}>
 <img ref={editImgRef} src={editImg} style={{width:"100%",height:"100%",objectFit:"contain",display:"block",userSelect:"none",WebkitUserSelect:"none"}} draggable={false}/>
 {/* Opaque checkerboard layer — blocks the img, shows transparency */}
 <div style={{position:"absolute",inset:0,backgroundImage:"repeating-conic-gradient(#333 0% 25%, #555 0% 50%)",backgroundSize:"16px 16px"}}/>
 <canvas ref={editCanvasRef} style={{position:"absolute",inset:0,width:"100%",height:"100%",
-  cursor:editTool==="eyedropper"?"crosshair":editTool==="blur"?"cell":editTool==="bgremove"?"crosshair":editTool==="wand"?"crosshair":"default",touchAction:"none"}}
+  cursor:editSpaceHeld?"grab":editTool==="eyedropper"?"crosshair":editTool==="blur"?"cell":editTool==="bgremove"?"crosshair":editTool==="wand"?"crosshair":"default",touchAction:"none"}}
   onMouseDown={editStartDraw}
   onContextMenu={e=>e.preventDefault()}
   onTouchStart={editTouchStart} onTouchMove={editTouchMove} onTouchEnd={editTouchEnd}/>
