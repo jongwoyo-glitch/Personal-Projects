@@ -492,7 +492,7 @@ async function generateImage(token,se,basePos,baseNeg,charPrompts,vibeRefs,i2iOp
   catch(e){if(blob.type?.startsWith("image/"))return URL.createObjectURL(blob);throw new Error("응답 파싱 실패")}
 }
 
-async function doInpaint(token,se,basePos,baseNeg,charPrompts,vibeRefs,imgB64,maskB64,strength){
+async function doInpaint(token,se,basePos,baseNeg,charPrompts,vibeRefs,imgB64,maskB64,strength,noise){
   token=token.trim();
   const seed=se.seed?parseInt(se.seed):Math.floor(Math.random()*4294967295);
   const inpaintModel=se.model+"-inpainting";
@@ -513,10 +513,10 @@ async function doInpaint(token,se,basePos,baseNeg,charPrompts,vibeRefs,imgB64,ma
     seed:seed,n_samples:1,ucPreset:0,qualityToggle:true,
     autoSmea:false,
     dynamic_thresholding:false,controlnet_strength:1,legacy:false,
-    add_original_image:false,cfg_rescale:0,noise_schedule:"karras",
+    add_original_image:true,cfg_rescale:0,noise_schedule:"karras",
     legacy_v3_extend:false,legacy_uc:false,skip_cfg_above_sigma:null,
     extra_noise_seed:seed,
-    image:imgB64,mask:maskB64,strength:strength,noise:0,
+    image:imgB64,mask:maskB64,strength:strength,noise:noise||0,
     inpaintImg2ImgStrength:1,
     deliberate_euler_ancestral_bug:false,prefer_brownian:true,
     normalize_reference_strength_multiple:true,
@@ -1062,6 +1062,7 @@ useEffect(()=>{
 const[lightbox,sLB]=useState(false); // "gen" | "post"
 const[ipEdit,sIPE]=useState(false); // inpaint editor open
 const[ipStrength,sIPS]=useState(0.7);
+const[ipNoise,sIPN]=useState(0);
 const[ipBrush,sIPB]=useState(64);
 const[ipErase,sIPEr]=useState(false);
 const[ipZoom,sIpZoom]=useState(1);
@@ -1246,7 +1247,7 @@ const doGenerate=async()=>{
       console.log("MaskB64 length:",ipMaskB64.length);
       console.log("Strength:",ipStrength);
       console.log("Model:",se.model+"-inpainting");
-      url=await doInpaint(se.apiToken,se,pBase||pO,nBase||nO,charPrompts,activeVibes,imgB64,ipMaskB64,ipStrength);
+      url=await doInpaint(se.apiToken,se,pBase||pO,nBase||nO,charPrompts,activeVibes,imgB64,ipMaskB64,ipStrength,ipNoise);
     }else if(mode==="img2img"&&baseImg){
       // Convert blob URL to proper PNG base64
       const resp=await fetch(baseImg);const blob=await resp.blob();
@@ -2378,8 +2379,11 @@ const editApplyToGen=()=>{
   drawAllLayers(ctx);
   out.toBlob(blob=>{
     const url=URL.createObjectURL(blob);
-    sGenImg(url);editClose();
-    tw("편집 적용 → 미리보기 설정됨");
+    sGenImg(url);
+    // If edited from base, also update baseImg so inpaint uses the edited version
+    if(editOrigin==="base"){sBaseImg(url);tw("편집 적용 → 미리보기 + Base 갱신됨")}
+    else{tw("편집 적용 → 미리보기 설정됨")}
+    editClose();
   },"image/png");
 };
 
@@ -2961,6 +2965,10 @@ return(
 <span style={{fontSize:10,color:"#888",flexShrink:0,width:32}}>강도</span>
 <input type="range" min={0} max={1} step={0.05} value={ipStrength} onChange={e=>sIPS(+e.target.value)} style={{flex:1,minWidth:0}}/>
 <span style={{fontSize:10,color:"#fa5",fontFamily:"monospace",flexShrink:0,width:26,textAlign:"right"}}>{ipStrength}</span></div>
+<div style={{display:"flex",alignItems:"center",gap:4,marginBottom:6,minWidth:0}}>
+<span style={{fontSize:10,color:"#888",flexShrink:0,width:32}}>노이즈</span>
+<input type="range" min={0} max={1} step={0.05} value={ipNoise} onChange={e=>sIPN(+e.target.value)} style={{flex:1,minWidth:0}}/>
+<span style={{fontSize:10,color:"#fa5",fontFamily:"monospace",flexShrink:0,width:26,textAlign:"right"}}>{ipNoise}</span></div>
 {ipMaskUrl?<div style={{display:"flex",gap:4}}>
 <button onClick={()=>sIPE(true)} style={{...Z.hB,fontSize:10,padding:"4px 10px",color:"#c8b8ff",flex:1}}>✏️ 마스크 수정</button>
 <button onClick={()=>{sIPMaskUrl(null);sIPMaskB64(null)}} style={{...Z.hB,fontSize:10,padding:"4px 10px",color:"#f55"}}>✕</button></div>
