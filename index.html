@@ -296,19 +296,9 @@ async function wasmWebpBlob(canvas,quality=0.9){
   return null;
 }
 
-// Universal file save — iPad: native share sheet, Desktop: File System Access or <a> fallback
+// Universal file save — Desktop: File System Access, iPad: share sheet, fallback: <a>
 async function saveBlob(blob,filename){
-  // 1. Try Web Share API (iPad/iOS → native share sheet with "Save to Files")
-  if(navigator.share&&navigator.canShare){
-    try{
-      const file=new File([blob],filename,{type:blob.type});
-      if(navigator.canShare({files:[file]})){
-        await navigator.share({files:[file]});
-        return;
-      }
-    }catch(e){if(e.name!=="AbortError")console.warn("share failed:",e)}
-  }
-  // 2. Try File System Access API (desktop Chrome)
+  // 1. Try File System Access API first (desktop Chrome/Edge → native save dialog)
   if(window.showSaveFilePicker){
     try{
       const ext=filename.split(".").pop()||"png";
@@ -318,10 +308,21 @@ async function saveBlob(blob,filename){
       return;
     }catch(e){if(e.name==="AbortError")return;console.warn("savePicker failed:",e)}
   }
-  // 3. Fallback: <a download>
+  // 2. Try Web Share API (iPad/iOS → native share sheet with "Save to Files")
+  if(navigator.share&&navigator.canShare){
+    try{
+      const file=new File([blob],filename,{type:blob.type});
+      if(navigator.canShare({files:[file]})){
+        await navigator.share({files:[file]});
+        return;
+      }
+    }catch(e){if(e.name!=="AbortError")console.warn("share failed:",e)}
+  }
+  // 3. Fallback: <a download> — must append to DOM for some browsers
   const a=document.createElement("a");a.href=URL.createObjectURL(blob);
-  a.download=filename;a.click();
-  setTimeout(()=>URL.revokeObjectURL(a.href),5000);
+  a.download=filename;a.style.display="none";
+  document.body.appendChild(a);a.click();
+  setTimeout(()=>{document.body.removeChild(a);URL.revokeObjectURL(a.href)},5000);
 }
 // Helper: convert blob URL or object URL to Blob
 async function urlToBlob(url){const r=await fetch(url);return r.blob()}
@@ -1094,12 +1095,22 @@ const[editSel,sEditSel]=useState(null); // Uint8Array selection mask (1=selected
 const[wandTol,sWandTol]=useState(32); // wand tolerance 0-255
 const[wandContig,sWandContig]=useState(true); // contiguous selection
 const editSelPath=useRef(null); // cached Path2D for selection clipping
+const[wandSub,sWandSub]=useState("color"); // "color"|"lasso"|"brush"
+const[selBrushSize,sSelBrushSize]=useState(30);
+const lassoPoints=useRef([]);
+const selDrawing=useRef(false);
+const selLastPos=useRef(null);
+const selWorkingMask=useRef(null);
+const[selMoving,sSelMoving]=useState(false);
+const selMoveData=useRef(null);
+const[selExpandAmt,sSelExpandAmt]=useState(3);
 const editToolNames={brush:"브러시",eraser:"지우개",eyedropper:"스포이드",blur:"블러",wand:"선택"};
 const[editShortcuts,sEditShortcuts]=useState(()=>{try{return JSON.parse(localStorage.getItem("nai_edit_shortcuts"))||{}}catch{return{}}});
 const[shortcutModal,sShortcutModal]=useState(null); // tool id being configured
 const shortcutModalPos=useRef({x:0,y:0});
 const[editLayers,sEditLayers]=useState([]); // [{id,name,visible}] - metadata only
 const[editActiveLayer,sEditActiveLayer]=useState(null);
+const[editShelf,sEditShelf]=useState([]); // [{id,name,thumbUrl,dataUrl}] — internal image shelf
 const editCanvasRef=useRef(null);
 const editImgRef=useRef(null);
 const editHistoryRef=useRef([]);
@@ -1338,7 +1349,25 @@ const initIpCanvas=useCallback(()=>{
   ipGridW.current=gw;ipGridH.current=gh;
   ipHistoryRef.current=[];ipLastPos.current=null;
   sIpZoom(1);sIpPan({x:0,y:0});
-},[se.width,se.height]);
+  // Restore existing mask if available
+  if(ipMaskB64){
+    const maskImg=new Image();
+    maskImg.onload=()=>{
+      const tmp=document.createElement("canvas");tmp.width=se.width;tmp.height=se.height;
+      const tctx=tmp.getContext("2d");
+      tctx.drawImage(maskImg,0,0,se.width,se.height);
+      const imgd=tctx.getImageData(0,0,se.width,se.height).data;
+      const g=ipGridRef.current;
+      for(let gy=0;gy<gh;gy++){for(let gx=0;gx<gw;gx++){
+        const px=Math.min(gx*IP_GRID+Math.floor(IP_GRID/2),se.width-1);
+        const py=Math.min(gy*IP_GRID+Math.floor(IP_GRID/2),se.height-1);
+        if(imgd[(py*se.width+px)*4]>127)g[gy*gw+gx]=1;
+      }}
+      ipRender();
+    };
+    maskImg.src="data:image/png;base64,"+ipMaskB64;
+  }
+},[se.width,se.height,ipMaskB64]);
 
 useEffect(()=>{if(ipEdit&&baseImg)setTimeout(initIpCanvas,100)},[ipEdit,baseImg,initIpCanvas]);
 
@@ -1662,20 +1691,6 @@ const compositeEdit=()=>{
     for(let i=0;i<w*h;i++){if(editSel[i])dd[i*4+3]=0;}
     oCtx.putImageData(ovD,0,0);
     ctx.drawImage(ov,0,0);
-    // Marching ants border — draw 1px white outline around selection edge
-    const bd=ctx.getImageData(0,0,w,h);
-    for(let y=0;y<h;y++){for(let x=0;x<w;x++){
-      const idx=y*w+x;
-      if(!editSel[idx])continue;
-      // Check 4 neighbors — if any neighbor is unselected or out of bounds, this is an edge pixel
-      const isEdge=(x===0||!editSel[idx-1])||(x===w-1||!editSel[idx+1])||(y===0||!editSel[idx-w])||(y===h-1||!editSel[idx+w]);
-      if(isEdge){
-        // Animated dotted pattern: alternate black/white based on position+time
-        const p=bd.data,pi=idx*4;
-        p[pi]=255;p[pi+1]=255;p[pi+2]=255;p[pi+3]=200;
-      }
-    }}
-    ctx.putImageData(bd,0,0);
   }
 };
 useEffect(()=>{if(editMode)compositeEdit()},[editMode,editLayers,editActiveLayer,editSel]);
@@ -1689,6 +1704,7 @@ useEffect(()=>{
   const handler=(e)=>{
     if(e.target.tagName==="INPUT"||e.target.tagName==="TEXTAREA"||e.target.tagName==="SELECT")return;
     if(shortcutModal)return; // modal is capturing
+    if(e.code==="Space")return; // reserved for pan
     const key=e.key.toLowerCase();
     for(const[tool,k] of Object.entries(editShortcuts)){
       if(k.toLowerCase()===key){e.preventDefault();sEditTool(tool);return;}
@@ -1708,6 +1724,7 @@ useEffect(()=>{
   const down=(e)=>{
     if(e.target.tagName==="INPUT"||e.target.tagName==="TEXTAREA")return;
     if(e.code==="Space"&&!e.repeat){e.preventDefault();editSpaceRef.current=true;sEditSpaceHeld(true)}
+    if((e.ctrlKey||e.metaKey)&&e.key==="c"){e.preventDefault();copyToShelf(editActiveLayer)}
   };
   const up=(e)=>{
     if(e.code==="Space"){e.preventDefault();editSpaceRef.current=false;sEditSpaceHeld(false);editSpacePanRef.current=null}
@@ -1715,9 +1732,53 @@ useEffect(()=>{
   window.addEventListener("keydown",down);
   window.addEventListener("keyup",up);
   return()=>{window.removeEventListener("keydown",down);window.removeEventListener("keyup",up);editSpaceRef.current=false;sEditSpaceHeld(false)};
-},[editMode]);
+},[editMode,editActiveLayer]);
 
 const getActiveCanvas=()=>editLayerCanvases.current[editActiveLayer]||null;
+
+// Copy layer → internal shelf
+const copyToShelf=(layerId)=>{
+  const cv=editLayerCanvases.current[layerId];
+  if(!cv){tw("⚠ 레이어를 선택하세요");return}
+  const l=editLayers.find(x=>x.id===layerId);
+  const name=l?.name||"레이어";
+  const thumbCv=document.createElement("canvas");
+  const scale=Math.min(120/cv.width,80/cv.height,1);
+  thumbCv.width=Math.round(cv.width*scale);thumbCv.height=Math.round(cv.height*scale);
+  thumbCv.getContext("2d").drawImage(cv,0,0,thumbCv.width,thumbCv.height);
+  const thumbUrl=thumbCv.toDataURL("image/png");
+  const dataUrl=cv.toDataURL("image/png");
+  sEditShelf(p=>[{id:G(),name,thumbUrl,dataUrl},...p].slice(0,20));
+  tw("📌 선반에 복사: "+name);
+};
+
+// Shelf item → new layer
+const shelfToLayer=(item)=>{
+  const img=new Image();
+  img.onload=()=>{
+    const id=addEditLayer(item.name+" (선반)");
+    setTimeout(()=>{
+      const cv=editLayerCanvases.current[id];
+      if(cv){cv.getContext("2d").drawImage(img,0,0,se.width,se.height);compositeEdit()}
+      tw("선반 → 새 레이어: "+item.name);
+    },50);
+  };
+  img.src=item.dataUrl;
+};
+
+// Duplicate active layer
+const duplicateLayer=()=>{
+  const acv=getActiveCanvas();
+  if(!acv){tw("⚠ 레이어를 선택하세요");return}
+  const activeL=editLayers.find(l=>l.id===editActiveLayer);
+  const newName=(activeL?.name||"레이어")+" (복제)";
+  const id=addEditLayer(newName);
+  setTimeout(()=>{
+    const cv=editLayerCanvases.current[id];
+    if(cv){cv.getContext("2d").drawImage(acv,0,0);compositeEdit()}
+    tw("레이어 복제됨");
+  },50);
+};
 
 const getEditXY=(e)=>{
   const wrap=editWrapRef.current;if(!wrap)return{x:0,y:0};
@@ -1735,7 +1796,8 @@ const getCompositeImageData=()=>{
 };
 
 // Magic Wand: flood fill selection
-const doWandSelect=(px,py)=>{
+const doWandSelect=(px,py,mode)=>{
+  mode=mode||"replace";
   const w=se.width,h=se.height;
   const id=getCompositeImageData();
   const d=id.data;
@@ -1744,28 +1806,60 @@ const doWandSelect=(px,py)=>{
   const si=(sy*w+sx)*4;
   const tr=d[si],tg=d[si+1],tb=d[si+2],ta=d[si+3];
   const tol=wandTol;
-  const mask=new Uint8Array(w*h);
+  const newMask=new Uint8Array(w*h);
   const match=(i)=>{
     const dr=d[i]-tr,dg=d[i+1]-tg,db=d[i+2]-tb,da=d[i+3]-ta;
     return Math.sqrt(dr*dr+dg*dg+db*db+da*da)<=tol;
   };
   if(wandContig){
-    // BFS flood fill from click point
     const q=[sx+sy*w];const visited=new Uint8Array(w*h);
-    visited[sx+sy*w]=1;mask[sx+sy*w]=1;
+    visited[sx+sy*w]=1;newMask[sx+sy*w]=1;
     while(q.length>0){
       const idx=q.pop();const ix=idx%w,iy=(idx-ix)/w;
       const nb=[];
       if(ix>0)nb.push(idx-1);if(ix<w-1)nb.push(idx+1);
       if(iy>0)nb.push(idx-w);if(iy<h-1)nb.push(idx+w);
-      for(const ni of nb){if(!visited[ni]){visited[ni]=1;if(match(ni*4)){mask[ni]=1;q.push(ni)}}}
+      for(const ni of nb){if(!visited[ni]){visited[ni]=1;if(match(ni*4)){newMask[ni]=1;q.push(ni)}}}
     }
   }else{
-    // Global: select all pixels matching color within tolerance
-    for(let i=0;i<w*h;i++){if(match(i*4))mask[i]=1}
+    for(let i=0;i<w*h;i++){if(match(i*4))newMask[i]=1}
   }
-  sEditSel(mask);
-  // Build cached Path2D from mask for clip()
+  mergeSelMask(newMask,mode);
+};
+
+const mergeSelMask=(newMask,mode)=>{
+  const w=se.width,h=se.height;
+  let finalMask;
+  if(mode==="add"&&editSel){
+    finalMask=new Uint8Array(w*h);
+    for(let i=0;i<w*h;i++)finalMask[i]=editSel[i]||newMask[i]?1:0;
+  }else if(mode==="subtract"&&editSel){
+    finalMask=new Uint8Array(editSel);
+    for(let i=0;i<w*h;i++){if(newMask[i])finalMask[i]=0}
+  }else{
+    finalMask=newMask;
+  }
+  sEditSel(finalMask);rebuildSelPath(finalMask);
+};
+
+const completeLasso=(mode)=>{
+  const pts=lassoPoints.current;
+  if(pts.length<3){lassoPoints.current=[];return}
+  const w=se.width,h=se.height;
+  const tc=document.createElement("canvas");tc.width=w;tc.height=h;
+  const tctx=tc.getContext("2d");
+  tctx.fillStyle="#fff";tctx.beginPath();tctx.moveTo(pts[0].x,pts[0].y);
+  for(let i=1;i<pts.length;i++)tctx.lineTo(pts[i].x,pts[i].y);
+  tctx.closePath();tctx.fill();
+  const td=tctx.getImageData(0,0,w,h).data;
+  const newMask=new Uint8Array(w*h);
+  for(let i=0;i<w*h;i++){if(td[i*4]>127)newMask[i]=1}
+  lassoPoints.current=[];
+  mergeSelMask(newMask,mode||"replace");
+};
+
+const rebuildSelPath=(mask)=>{
+  const w=se.width,h=se.height;
   const path=new Path2D();
   for(let y=0;y<h;y++){
     let rs=-1;
@@ -1776,6 +1870,91 @@ const doWandSelect=(px,py)=>{
     }
   }
   editSelPath.current=path;
+};
+
+const expandSelection=(n)=>{
+  if(!editSel)return;
+  const w=se.width,h=se.height;
+  let cur=new Uint8Array(editSel);
+  for(let step=0;step<n;step++){
+    const next=new Uint8Array(cur);
+    for(let y=0;y<h;y++){for(let x=0;x<w;x++){
+      if(cur[y*w+x])continue;
+      if((x>0&&cur[y*w+x-1])||(x<w-1&&cur[y*w+x+1])||(y>0&&cur[(y-1)*w+x])||(y<h-1&&cur[(y+1)*w+x]))next[y*w+x]=1;
+    }}
+    cur=next;
+  }
+  sEditSel(cur);rebuildSelPath(cur);compositeEdit();
+};
+
+const shrinkSelection=(n)=>{
+  if(!editSel)return;
+  const w=se.width,h=se.height;
+  let cur=new Uint8Array(editSel);
+  for(let step=0;step<n;step++){
+    const next=new Uint8Array(cur);
+    for(let y=0;y<h;y++){for(let x=0;x<w;x++){
+      if(!cur[y*w+x])continue;
+      if((x===0||!cur[y*w+x-1])||(x===w-1||!cur[y*w+x+1])||(y===0||!cur[(y-1)*w+x])||(y===h-1||!cur[(y+1)*w+x]))next[y*w+x]=0;
+    }}
+    cur=next;
+  }
+  sEditSel(cur);rebuildSelPath(cur);compositeEdit();
+};
+
+const invertSelection=()=>{
+  if(!editSel)return;
+  const w=se.width,h=se.height;
+  const inv=new Uint8Array(w*h);
+  for(let i=0;i<w*h;i++)inv[i]=editSel[i]?0:1;
+  sEditSel(inv);rebuildSelPath(inv);compositeEdit();
+};
+
+// Selection move
+const startSelMove=(x,y)=>{
+  if(!editSel)return;
+  const acv=getActiveCanvas();if(!acv)return;
+  editSaveSnap();
+  const w=se.width,h=se.height;
+  const ctx=acv.getContext("2d");
+  const imgData=ctx.getImageData(0,0,w,h);
+  const extracted=new ImageData(w,h);
+  for(let i=0;i<w*h;i++){
+    if(editSel[i]){
+      extracted.data[i*4]=imgData.data[i*4];extracted.data[i*4+1]=imgData.data[i*4+1];
+      extracted.data[i*4+2]=imgData.data[i*4+2];extracted.data[i*4+3]=imgData.data[i*4+3];
+      imgData.data[i*4+3]=0;
+    }
+  }
+  ctx.putImageData(imgData,0,0);
+  selMoveData.current={extracted,mask:new Uint8Array(editSel),startX:x,startY:y,offsetX:0,offsetY:0};
+  sSelMoving(true);compositeEdit();
+};
+
+const commitSelMove=()=>{
+  const d=selMoveData.current;if(!d)return;
+  const acv=getActiveCanvas();if(!acv)return;
+  const w=se.width,h=se.height,ctx=acv.getContext("2d");
+  const ox=Math.round(d.offsetX),oy=Math.round(d.offsetY);
+  const tmp=document.createElement("canvas");tmp.width=w;tmp.height=h;
+  tmp.getContext("2d").putImageData(d.extracted,0,0);
+  ctx.drawImage(tmp,ox,oy);
+  const newMask=new Uint8Array(w*h);
+  for(let y=0;y<h;y++){for(let x=0;x<w;x++){
+    const sx=x-ox,sy=y-oy;
+    if(sx>=0&&sx<w&&sy>=0&&sy<h&&d.mask[sy*w+sx])newMask[y*w+x]=1;
+  }}
+  sEditSel(newMask);rebuildSelPath(newMask);
+  selMoveData.current=null;sSelMoving(false);compositeEdit();
+};
+
+const cancelSelMove=()=>{
+  const d=selMoveData.current;if(!d)return;
+  const acv=getActiveCanvas();if(!acv)return;
+  const tmp=document.createElement("canvas");tmp.width=se.width;tmp.height=se.height;
+  tmp.getContext("2d").putImageData(d.extracted,0,0);
+  acv.getContext("2d").drawImage(tmp,0,0);
+  selMoveData.current=null;sSelMoving(false);compositeEdit();
 };
 
 // Fill selection with current color (or clear if transparent)
@@ -1897,7 +2076,55 @@ const editStartDraw=(e)=>{
   }
   if(editTool==="wand"){
     const{x,y}=getEditXY(e);
-    doWandSelect(x,y);
+    const mode=e.shiftKey?"add":e.altKey?"subtract":"replace";
+    if(selMoving){
+      // During move: drag to reposition
+      selMoveData.current.startX=x;selMoveData.current.startY=y;
+      const onMoveM=(ev)=>{
+        ev.preventDefault();const p=getEditXY(ev);
+        const d=selMoveData.current;if(!d)return;
+        d.offsetX=p.x-d.startX;d.offsetY=p.y-d.startY;
+        // Render preview
+        const acv=getActiveCanvas();if(!acv)return;
+        const w=se.width,h=se.height;
+        compositeEdit();
+        const ctx=editCanvasRef.current?.getContext("2d");if(!ctx)return;
+        const tmp=document.createElement("canvas");tmp.width=w;tmp.height=h;
+        tmp.getContext("2d").putImageData(d.extracted,0,0);
+        ctx.drawImage(tmp,Math.round(d.offsetX),Math.round(d.offsetY));
+      };
+      const onUpM=()=>{document.removeEventListener("mousemove",onMoveM);document.removeEventListener("mouseup",onUpM)};
+      document.addEventListener("mousemove",onMoveM);document.addEventListener("mouseup",onUpM);
+      return;
+    }
+    if(wandSub==="color"){
+      doWandSelect(x,y,mode);
+    }else if(wandSub==="lasso"){
+      lassoPoints.current=[{x,y}];
+      const onMoveL=(ev)=>{ev.preventDefault();const p=getEditXY(ev);lassoPoints.current.push(p)};
+      const onUpL=()=>{completeLasso(mode);document.removeEventListener("mousemove",onMoveL);document.removeEventListener("mouseup",onUpL)};
+      document.addEventListener("mousemove",onMoveL);document.addEventListener("mouseup",onUpL);
+    }else if(wandSub==="brush"){
+      selWorkingMask.current=editSel?new Uint8Array(editSel):new Uint8Array(se.width*se.height);
+      const stampBrush=(px,py)=>{
+        const w=se.width,h=se.height,r=selBrushSize/2;
+        const m=selWorkingMask.current;
+        const x0=Math.max(0,Math.floor(px-r)),x1=Math.min(w,Math.ceil(px+r));
+        const y0=Math.max(0,Math.floor(py-r)),y1=Math.min(h,Math.ceil(py+r));
+        for(let sy=y0;sy<y1;sy++){for(let sx=x0;sx<x1;sx++){
+          if(Math.hypot(sx-px,sy-py)<=r)m[sy*w+sx]=mode==="subtract"?0:1;
+        }}
+      };
+      stampBrush(x,y);
+      const onMoveB=(ev)=>{ev.preventDefault();const p=getEditXY(ev);stampBrush(p.x,p.y);
+        sEditSel(new Uint8Array(selWorkingMask.current));rebuildSelPath(selWorkingMask.current);compositeEdit()};
+      const onUpB=()=>{
+        sEditSel(new Uint8Array(selWorkingMask.current));rebuildSelPath(selWorkingMask.current);compositeEdit();
+        selWorkingMask.current=null;
+        document.removeEventListener("mousemove",onMoveB);document.removeEventListener("mouseup",onUpB)};
+      document.addEventListener("mousemove",onMoveB);document.addEventListener("mouseup",onUpB);
+      sEditSel(new Uint8Array(selWorkingMask.current));rebuildSelPath(selWorkingMask.current);compositeEdit();
+    }
     return;
   }
   editSaveSnap();editDrawing.current=true;editDoDraw(e);
@@ -3126,16 +3353,45 @@ return(
 <span style={{fontSize:9,color:"#aaa",fontFamily:"monospace",minWidth:12}}>{editBlurStr}</span>
 </React.Fragment>}
 {editTool==="wand"&&<React.Fragment>
+<div style={{display:"flex",gap:2}}>
+<button onClick={()=>sWandSub("color")} style={{...Z.hB,fontSize:8,padding:"3px 6px",minHeight:28,background:wandSub==="color"?"rgba(90,180,255,.2)":"transparent",color:wandSub==="color"?"#5cb8ff":"#666"}}>🪄 색상</button>
+<button onClick={()=>sWandSub("lasso")} style={{...Z.hB,fontSize:8,padding:"3px 6px",minHeight:28,background:wandSub==="lasso"?"rgba(90,180,255,.2)":"transparent",color:wandSub==="lasso"?"#5cb8ff":"#666"}}>✂ 라쏘</button>
+<button onClick={()=>sWandSub("brush")} style={{...Z.hB,fontSize:8,padding:"3px 6px",minHeight:28,background:wandSub==="brush"?"rgba(90,180,255,.2)":"transparent",color:wandSub==="brush"?"#5cb8ff":"#666"}}>🖌 브러시</button>
+</div>
+{wandSub==="color"&&<React.Fragment>
 <span style={{fontSize:9,color:"#888"}}>허용</span>
-<input type="range" min={0} max={255} value={wandTol} onChange={e=>sWandTol(+e.target.value)} style={{width:70}}/>
+<button onClick={()=>sWandTol(t=>Math.max(0,t-1))} style={{...Z.hB,fontSize:9,padding:"2px 5px",minHeight:24}}>−</button>
+<button onClick={()=>sWandTol(t=>Math.max(0,t-5))} style={{...Z.hB,fontSize:9,padding:"2px 5px",minHeight:24}}>−5</button>
 <span style={{fontSize:9,color:"#aaa",fontFamily:"monospace",minWidth:18}}>{wandTol}</span>
-<button onClick={()=>sWandContig(p=>!p)} style={{...Z.hB,fontSize:9,padding:"4px 8px",minHeight:32,
+<button onClick={()=>sWandTol(t=>Math.min(255,t+5))} style={{...Z.hB,fontSize:9,padding:"2px 5px",minHeight:24}}>+5</button>
+<button onClick={()=>sWandTol(t=>Math.min(255,t+1))} style={{...Z.hB,fontSize:9,padding:"2px 5px",minHeight:24}}>+</button>
+<button onClick={()=>sWandContig(p=>!p)} style={{...Z.hB,fontSize:9,padding:"4px 8px",minHeight:28,
   background:wandContig?"rgba(90,180,255,.15)":"rgba(255,180,60,.15)",
-  borderColor:wandContig?"rgba(90,180,255,.3)":"rgba(255,180,60,.3)",
   color:wandContig?"#5cb8ff":"#fa5"}}>{wandContig?"인접":"전체"}</button>
+</React.Fragment>}
+{wandSub==="brush"&&<React.Fragment>
+<span style={{fontSize:9,color:"#888"}}>크기</span>
+<input type="range" min={2} max={200} value={selBrushSize} onChange={e=>sSelBrushSize(+e.target.value)} style={{width:60}}/>
+<span style={{fontSize:9,color:"#aaa",fontFamily:"monospace",minWidth:18}}>{selBrushSize}</span>
+</React.Fragment>}
+<span style={{fontSize:7,color:"#555"}}>Shift+◐ Alt-◑</span>
+<div style={{display:"flex",gap:2,alignItems:"center"}}>
+<span style={{fontSize:8,color:"#666"}}>px</span>
+<button onClick={()=>sSelExpandAmt(a=>Math.max(1,a-1))} style={{...Z.hB,fontSize:9,padding:"1px 4px",minHeight:22}}>−</button>
+<span style={{fontSize:9,color:"#aaa",fontFamily:"monospace",minWidth:12}}>{selExpandAmt}</span>
+<button onClick={()=>sSelExpandAmt(a=>Math.min(50,a+1))} style={{...Z.hB,fontSize:9,padding:"1px 4px",minHeight:22}}>+</button>
+<button onClick={()=>expandSelection(selExpandAmt)} style={{...Z.hB,fontSize:8,padding:"3px 6px",minHeight:24,color:"#8d8"}}>⊕확장</button>
+<button onClick={()=>shrinkSelection(selExpandAmt)} style={{...Z.hB,fontSize:8,padding:"3px 6px",minHeight:24,color:"#fa5"}}>⊖축소</button>
+<button onClick={invertSelection} style={{...Z.hB,fontSize:8,padding:"3px 6px",minHeight:24,color:"#aaa"}}>◑반전</button>
+</div>
 <button onClick={fillSelection} style={{...Z.hB,fontSize:11,padding:"4px 10px",minHeight:32,color:"#8d8",borderColor:"rgba(100,200,100,.3)"}} title="선택 영역 채우기">🪣</button>
-<button onClick={()=>{sEditSel(null);editSelPath.current=null}} style={{...Z.hB,fontSize:9,padding:"4px 8px",minHeight:32,color:"#f88",borderColor:"rgba(255,100,100,.3)"}} title="선택 해제">{editSel?"✕ 해제":"—"}</button>
-<button onClick={()=>{sEditSel(null);editSelPath.current=null;sEditTool(prevEditTool.current||"brush")}} style={{...Z.hB,fontSize:10,padding:"4px 10px",minHeight:32,color:"#5cb8ff",borderColor:"rgba(90,180,255,.3)",background:"rgba(90,180,255,.12)"}} title="선택 확정 후 이전 도구로 복귀">✅ 확정</button>
+<button onClick={()=>{if(selMoving){cancelSelMove()}else if(editSel){startSelMove(se.width/2,se.height/2)}}} style={{...Z.hB,fontSize:9,padding:"4px 8px",minHeight:32,
+  background:selMoving?"rgba(255,180,60,.2)":"transparent",
+  color:selMoving?"#fa5":editSel?"#aaa":"#444",borderColor:selMoving?"rgba(255,180,60,.3)":"rgba(255,255,255,.1)"}}
+  disabled={!editSel&&!selMoving}>{selMoving?"✥ 취소":"✥ 이동"}</button>
+{selMoving&&<button onClick={commitSelMove} style={{...Z.hB,fontSize:9,padding:"4px 8px",minHeight:32,color:"#8d8",borderColor:"rgba(100,200,100,.3)"}}>✅ 이동확정</button>}
+<button onClick={()=>{sEditSel(null);editSelPath.current=null;sSelMoving(false);selMoveData.current=null}} style={{...Z.hB,fontSize:9,padding:"4px 8px",minHeight:32,color:"#f88",borderColor:"rgba(255,100,100,.3)"}} title="선택 해제">{editSel?"✕ 해제":"—"}</button>
+<button onClick={()=>{sEditSel(null);editSelPath.current=null;sSelMoving(false);selMoveData.current=null;sEditTool(prevEditTool.current||"brush")}} style={{...Z.hB,fontSize:10,padding:"4px 10px",minHeight:32,color:"#5cb8ff",borderColor:"rgba(90,180,255,.3)",background:"rgba(90,180,255,.12)"}} title="선택 확정 후 이전 도구로 복귀">✅ 확정</button>
 </React.Fragment>}
 <div style={{width:1,height:20,background:"rgba(255,255,255,.08)"}}/>
 <button onClick={editUndo} style={{...Z.hB,fontSize:12,padding:"6px 12px",minHeight:44}} title="Ctrl+Z">↩</button>
@@ -3276,6 +3532,7 @@ return <div key={t} style={{borderRadius:12,border:`1px solid ${bc}`,background:
 <div style={{padding:"10px 13px",borderBottom:"1px solid rgba(90,180,255,.08)",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
 <span style={{fontSize:17,fontWeight:700,color:"#5cb8ff"}}>레이어</span>
 <button onClick={()=>addEditLayer()} style={{...Z.pB,width:34,height:34,fontSize:17}}>+</button>
+<button onClick={duplicateLayer} style={{...Z.hB,width:34,height:34,fontSize:13}} title="레이어 복제">📋</button>
 </div>
 <div className="scroll-y" style={{flex:1,padding:8}}>
 {[...editLayers].reverse().map((l,ri)=>{
@@ -3297,9 +3554,26 @@ return(
 {idx>0&&<button onClick={()=>sEditLayers(p=>{const a=[...p];[a[idx],a[idx-1]]=[a[idx-1],a[idx]];return a})} style={{background:"none",border:"none",color:"#666",fontSize:10,cursor:"pointer",padding:"0 3px",lineHeight:1}}>▼</button>}
 </div>
 {/* Delete */}
+<button onClick={e=>{e.stopPropagation();copyToShelf(l.id)}} style={{background:"none",border:"none",color:"#aaa",fontSize:12,cursor:"pointer",padding:0,flexShrink:0}} title="선반에 복사">📌</button>
 {!isSrc&&editLayers.filter(x=>x.type!=="source").length>1&&<button onClick={e=>{e.stopPropagation();const lid=l.id;delete editLayerCanvases.current[lid];sEditLayers(p=>p.filter(x=>x.id!==lid));if(editActiveLayer===lid){const next=editLayers.find(x=>x.id!==lid&&x.type!=="source");if(next)sEditActiveLayer(next.id)}}} style={{background:"none",border:"none",color:"#f55",fontSize:13,cursor:"pointer",padding:0,flexShrink:0}}>✕</button>}
 </div>)})}
 </div>
+{/* Shelf */}
+{editShelf.length>0&&<div style={{borderTop:"1px solid rgba(120,90,255,.1)",padding:6}}>
+<div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
+<span style={{fontSize:9,color:"#666",fontWeight:600}}>📌 선반 ({editShelf.length})</span>
+<button onClick={()=>sEditShelf([])} style={{background:"none",border:"none",color:"#f55",fontSize:8,cursor:"pointer",padding:"1px 4px"}}>전체 삭제</button>
+</div>
+<div style={{display:"flex",flexWrap:"wrap",gap:3}}>
+{editShelf.map(item=>(
+<div key={item.id} style={{position:"relative",cursor:"pointer",border:"1px solid rgba(255,255,255,.1)",borderRadius:4,overflow:"hidden"}}
+  onClick={()=>shelfToLayer(item)} title={item.name+" → 새 레이어"}>
+<img src={item.thumbUrl} style={{display:"block",height:40,width:"auto",minWidth:30}}/>
+<button onClick={e=>{e.stopPropagation();sEditShelf(p=>p.filter(x=>x.id!==item.id))}}
+  style={{position:"absolute",top:0,right:0,background:"rgba(0,0,0,.6)",border:"none",color:"#f55",fontSize:8,cursor:"pointer",padding:"0 3px",lineHeight:"14px"}}>✕</button>
+</div>))}
+</div>
+</div>}
 </div>}
 {/* Canvas area with zoom/pan */}
 <div style={{flex:1,overflow:"hidden",position:"relative",display:"flex",alignItems:"center",justifyContent:"center",cursor:editSpaceHeld?"grab":"default"}} onWheel={editWheel}>
