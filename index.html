@@ -1061,6 +1061,11 @@ const[ipEdit,sIPE]=useState(false); // inpaint editor open
 const[ipStrength,sIPS]=useState(0.7);
 const[ipBrush,sIPB]=useState(64);
 const[ipErase,sIPEr]=useState(false);
+const[ipZoom,sIpZoom]=useState(1);
+const[ipPan,sIpPan]=useState({x:0,y:0});
+const ipSpaceRef=useRef(false);
+const[ipSpaceHeld,sIpSpaceHeld]=useState(false);
+const ipSpacePanRef=useRef(null);
 const[ipMaskUrl,sIPMaskUrl]=useState(null); // visual overlay for preview
 const[ipMaskB64,sIPMaskB64]=useState(null); // processed B&W mask base64 for API
 const ipCanvasRef=useRef(null);
@@ -1327,9 +1332,40 @@ const initIpCanvas=useCallback(()=>{
   ipGridRef.current=new Uint8Array(gw*gh);
   ipGridW.current=gw;ipGridH.current=gh;
   ipHistoryRef.current=[];ipLastPos.current=null;
+  sIpZoom(1);sIpPan({x:0,y:0});
 },[se.width,se.height]);
 
 useEffect(()=>{if(ipEdit&&baseImg)setTimeout(initIpCanvas,100)},[ipEdit,baseImg,initIpCanvas]);
+
+// Inpaint: spacebar pan + Ctrl+Z
+useEffect(()=>{
+  if(!ipEdit)return;
+  const down=(e)=>{
+    if(e.target.tagName==="INPUT"||e.target.tagName==="TEXTAREA")return;
+    if(e.code==="Space"&&!e.repeat){e.preventDefault();ipSpaceRef.current=true;sIpSpaceHeld(true)}
+    if((e.ctrlKey||e.metaKey)&&e.key==="z"){e.preventDefault();ipUndo()}
+  };
+  const up=(e)=>{
+    if(e.code==="Space"){e.preventDefault();ipSpaceRef.current=false;sIpSpaceHeld(false);ipSpacePanRef.current=null}
+  };
+  window.addEventListener("keydown",down);
+  window.addEventListener("keyup",up);
+  return()=>{window.removeEventListener("keydown",down);window.removeEventListener("keyup",up);ipSpaceRef.current=false;sIpSpaceHeld(false)};
+},[ipEdit]);
+
+// Inpaint: wheel zoom
+const ipWheel=(e)=>{
+  e.preventDefault();
+  const factor=e.deltaY>0?0.9:1.1;
+  const newZoom=Math.max(0.25,Math.min(5,ipZoom*factor));
+  const scale=newZoom/ipZoom;
+  const parent=e.currentTarget;const pr=parent.getBoundingClientRect();
+  const ccx=pr.left+pr.width/2,ccy=pr.top+pr.height/2;
+  const focalX=e.clientX-ccx-ipPan.x;
+  const focalY=e.clientY-ccy-ipPan.y;
+  sIpPan(p=>({x:p.x+focalX*(1-scale),y:p.y+focalY*(1-scale)}));
+  sIpZoom(newZoom);
+};
 
 const getIpXY=(e)=>{
   const cv=ipCanvasRef.current;if(!cv)return{x:0,y:0};
@@ -1390,6 +1426,25 @@ const ipStampGrid=(x,y,brushSize,erase)=>{
   ipRender();
 };
 const ipStartDraw=(e)=>{
+  // Spacebar + drag = pan
+  if(ipSpaceRef.current&&!e.touches){
+    e.preventDefault();
+    ipSpacePanRef.current={startX:e.clientX,startY:e.clientY,panX:ipPan.x,panY:ipPan.y};
+    const onMove=(ev)=>{
+      ev.preventDefault();
+      if(!ipSpacePanRef.current)return;
+      sIpPan({x:ipSpacePanRef.current.panX+(ev.clientX-ipSpacePanRef.current.startX),
+              y:ipSpacePanRef.current.panY+(ev.clientY-ipSpacePanRef.current.startY)});
+    };
+    const onUp=()=>{
+      ipSpacePanRef.current=null;
+      document.removeEventListener("mousemove",onMove);
+      document.removeEventListener("mouseup",onUp);
+    };
+    document.addEventListener("mousemove",onMove);
+    document.addEventListener("mouseup",onUp);
+    return;
+  }
   // Ctrl+Alt drag = brush resize
   if((e.ctrlKey||e.metaKey)&&e.altKey){
     e.preventDefault();
@@ -3228,6 +3283,7 @@ return(
 </div>
 <button onClick={ipUndo} style={{...Z.hB,fontSize:11,padding:"6px 12px",minHeight:44}}>↩ 되돌리기</button>
 <button onClick={ipClear} style={{...Z.hB,fontSize:11,padding:"6px 12px",minHeight:44,color:"#f66"}}>✕ 초기화</button>
+{ipZoom!==1&&<button onClick={()=>{sIpZoom(1);sIpPan({x:0,y:0})}} style={{...Z.hB,fontSize:10,padding:"6px 10px",minHeight:44,color:"#aaa"}}>1:1</button>}
 <div style={{flex:1}}/>
 <button onClick={applyIpMask} className="gen-btn" style={{fontSize:12,padding:"6px 16px",minHeight:36}}>✅ 마스크 적용</button>
 <button onClick={()=>sIPE(false)} style={{...Z.hB,fontSize:14,padding:"4px 10px",color:"#f66"}}>✕</button>
@@ -3246,13 +3302,14 @@ return(
   color:ipErase?"#f66":"#888"}}>🧹</button>
 </div>
 {/* Canvas area */}
-<div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",padding:10,minHeight:0,touchAction:"none"}} onContextMenu={e=>e.preventDefault()}>
-<div style={{position:"relative",maxWidth:"100%",maxHeight:"100%",aspectRatio:String(se.width/se.height)}}>
+<div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",padding:10,minHeight:0,touchAction:"none",cursor:ipSpaceHeld?"grab":"default"}} onContextMenu={e=>e.preventDefault()} onWheel={ipWheel}>
+<div style={{position:"relative",maxWidth:"100%",maxHeight:"100%",aspectRatio:String(se.width/se.height),transform:`scale(${ipZoom}) translate(${ipPan.x/ipZoom}px,${ipPan.y/ipZoom}px)`,transformOrigin:"center center"}}>
 <img ref={ipImgRef} src={baseImg} style={{width:"100%",height:"100%",objectFit:"contain",display:"block",borderRadius:4,userSelect:"none",WebkitUserSelect:"none",WebkitTouchCallout:"none",pointerEvents:"none"}} draggable={false}/>
-<canvas ref={ipCanvasRef} style={{position:"absolute",inset:0,width:"100%",height:"100%",cursor:"crosshair",touchAction:"none",borderRadius:4,opacity:0.5,WebkitTouchCallout:"none",WebkitUserSelect:"none"}}
+<canvas ref={ipCanvasRef} style={{position:"absolute",inset:0,width:"100%",height:"100%",cursor:ipSpaceHeld?"grab":"crosshair",touchAction:"none",borderRadius:4,opacity:0.5,WebkitTouchCallout:"none",WebkitUserSelect:"none"}}
   onMouseDown={ipStartDraw} onMouseMove={ipDraw} onMouseUp={ipStopDraw} onMouseLeave={ipStopDraw}
   onTouchStart={ipStartDraw} onTouchMove={ipDraw} onTouchEnd={ipStopDraw}
   onContextMenu={e=>e.preventDefault()}/>
+{ipZoom!==1&&<div style={{position:"absolute",top:4,right:4,fontSize:9,padding:"2px 6px",borderRadius:3,background:"rgba(0,0,0,.6)",color:"#aaa",pointerEvents:"none"}}>{Math.round(ipZoom*100)}%</div>}
 </div>
 </div>
 </div>
