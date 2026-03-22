@@ -492,7 +492,7 @@ async function generateImage(token,se,basePos,baseNeg,charPrompts,vibeRefs,i2iOp
   catch(e){if(blob.type?.startsWith("image/"))return URL.createObjectURL(blob);throw new Error("응답 파싱 실패")}
 }
 
-async function doInpaint(token,se,basePos,baseNeg,charPrompts,vibeRefs,imgB64,maskB64,strength){
+async function doInpaint(token,se,basePos,baseNeg,charPrompts,vibeRefs,imgB64,maskB64,strength,addOrig){
   token=token.trim();
   const seed=se.seed?parseInt(se.seed):Math.floor(Math.random()*4294967295);
   const inpaintModel=se.model+"-inpainting";
@@ -513,7 +513,7 @@ async function doInpaint(token,se,basePos,baseNeg,charPrompts,vibeRefs,imgB64,ma
     seed:seed,n_samples:1,ucPreset:0,qualityToggle:true,
     autoSmea:false,
     dynamic_thresholding:false,controlnet_strength:1,legacy:false,
-    add_original_image:true,cfg_rescale:0,noise_schedule:"karras",
+    add_original_image:addOrig!==false,cfg_rescale:0,noise_schedule:"karras",
     legacy_v3_extend:false,legacy_uc:false,skip_cfg_above_sigma:null,
     extra_noise_seed:seed,
     image:imgB64,mask:maskB64,strength:strength,noise:0,request_type:"NativeInfillingRequest",
@@ -1062,6 +1062,7 @@ useEffect(()=>{
 const[lightbox,sLB]=useState(false); // "gen" | "post"
 const[ipEdit,sIPE]=useState(false); // inpaint editor open
 const[ipStrength,sIPS]=useState(0.7);
+const[ipAddOrig,sIPAO]=useState(true); // add_original_image toggle
 const[ipBrush,sIPB]=useState(64);
 const[ipErase,sIPEr]=useState(false);
 const[ipZoom,sIpZoom]=useState(1);
@@ -1247,7 +1248,7 @@ const doGenerate=async()=>{
       console.log("MaskB64 length:",ipMaskB64.length);
       console.log("Strength:",ipStrength);
       console.log("Model:",se.model+"-inpainting");
-      url=await doInpaint(se.apiToken,se,pBase||pO,nBase||nO,charPrompts,activeVibes,imgB64,ipMaskB64,ipStrength);
+      url=await doInpaint(se.apiToken,se,pBase||pO,nBase||nO,charPrompts,activeVibes,imgB64,ipMaskB64,ipStrength,ipAddOrig);
     }else if(mode==="img2img"&&baseImg){
       // Convert blob URL to proper PNG base64
       const resp=await fetch(baseImg);const blob=await resp.blob();
@@ -2101,8 +2102,22 @@ const editStartDraw=(e)=>{
       doWandSelect(x,y,mode);
     }else if(wandSub==="lasso"){
       lassoPoints.current=[{x,y}];
-      const onMoveL=(ev)=>{ev.preventDefault();const p=getEditXY(ev);lassoPoints.current.push(p)};
-      const onUpL=()=>{completeLasso(mode);document.removeEventListener("mousemove",onMoveL);document.removeEventListener("mouseup",onUpL)};
+      const drawLassoPreview=()=>{
+        compositeEdit();
+        const cv=editCanvasRef.current;if(!cv)return;
+        const ctx=cv.getContext("2d");
+        const pts=lassoPoints.current;if(pts.length<2)return;
+        ctx.save();ctx.setLineDash([6,4]);ctx.strokeStyle="rgba(90,180,255,.8)";ctx.lineWidth=2/editZoom;
+        ctx.beginPath();ctx.moveTo(pts[0].x,pts[0].y);
+        for(let i=1;i<pts.length;i++)ctx.lineTo(pts[i].x,pts[i].y);
+        ctx.stroke();
+        // Show closing line to start
+        ctx.setLineDash([3,5]);ctx.strokeStyle="rgba(255,180,60,.5)";
+        ctx.beginPath();ctx.moveTo(pts[pts.length-1].x,pts[pts.length-1].y);ctx.lineTo(pts[0].x,pts[0].y);ctx.stroke();
+        ctx.restore();
+      };
+      const onMoveL=(ev)=>{ev.preventDefault();const p=getEditXY(ev);lassoPoints.current.push(p);drawLassoPreview()};
+      const onUpL=()=>{completeLasso(mode);compositeEdit();document.removeEventListener("mousemove",onMoveL);document.removeEventListener("mouseup",onUpL)};
       document.addEventListener("mousemove",onMoveL);document.addEventListener("mouseup",onUpL);
     }else if(wandSub==="brush"){
       selWorkingMask.current=editSel?new Uint8Array(editSel):new Uint8Array(se.width*se.height);
@@ -2941,6 +2956,12 @@ return(
 <span style={{fontSize:10,color:"#888",flexShrink:0,width:32}}>강도</span>
 <input type="range" min={0} max={1} step={0.05} value={ipStrength} onChange={e=>sIPS(+e.target.value)} style={{flex:1,minWidth:0}}/>
 <span style={{fontSize:10,color:"#fa5",fontFamily:"monospace",flexShrink:0,width:26,textAlign:"right"}}>{ipStrength}</span></div>
+<div style={{display:"flex",alignItems:"center",gap:4,marginBottom:6,minWidth:0}}>
+<button onClick={()=>sIPAO(p=>!p)} style={{...Z.hB,fontSize:9,padding:"3px 8px",width:"100%",minHeight:24,
+  background:ipAddOrig?"rgba(255,180,60,.15)":"transparent",
+  borderColor:ipAddOrig?"rgba(255,180,60,.3)":"rgba(255,255,255,.1)",
+  color:ipAddOrig?"#fa5":"#666"}}>{ipAddOrig?"원본 참조 ON":"원본 참조 OFF"}</button>
+</div>
 {ipMaskUrl?<div style={{display:"flex",gap:4}}>
 <button onClick={()=>sIPE(true)} style={{...Z.hB,fontSize:10,padding:"4px 10px",color:"#c8b8ff",flex:1}}>✏️ 마스크 수정</button>
 <button onClick={()=>{sIPMaskUrl(null);sIPMaskB64(null)}} style={{...Z.hB,fontSize:10,padding:"4px 10px",color:"#f55"}}>✕</button></div>
